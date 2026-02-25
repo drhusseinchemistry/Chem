@@ -73,11 +73,15 @@ export default function App() {
   // --- Initialization ---
 
   useEffect(() => {
-    // 1. Initialize Peer with STUN servers for better connectivity
+    // 1. Initialize Peer with multiple STUN servers for better connectivity
     const peer = new Peer({
         config: {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' },
                 { urls: 'stun:global.stun.twilio.com:3478' }
             ]
         }
@@ -421,7 +425,10 @@ export default function App() {
                     </button>
                 ) : (
                     <div style={{marginTop: '10px'}}>
-                        <p style={{color: 'green'}}>Room Created! Waiting for friend...</p>
+                        <p style={{color: 'green', fontWeight: 'bold'}}>Room Created!</p>
+                        <p style={{color: '#d32f2f', fontSize: '12px', marginBottom: '10px'}}>
+                            ⚠️ Do not refresh this page, or the link will stop working.
+                        </p>
                         <button className="btn-copy-link" onClick={copyInvite} style={{display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', margin: '10px auto'}}>
                             <Share2 size={16}/> Copy Invite Link
                         </button>
