@@ -1,14 +1,13 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { Peer, DataConnection, MediaConnection } from 'peerjs';
 import { defaultQuizData } from './data';
 import './Game.css';
 import { Mic, MicOff, Phone, Share2 } from 'lucide-react';
 
 // --- Types ---
 interface Player {
-  id: string;
+  id: string; // Peer ID
   name: string;
   team: 1 | 2;
 }
@@ -19,13 +18,34 @@ interface Question {
   correctAnswer: string;
 }
 
-// --- Socket Setup ---
-const socket: Socket = io(window.location.origin);
+interface GameState {
+  ropePosition: number;
+  winnerName: string | null;
+  gameStarted: boolean;
+}
+
+// Data Packet Types
+type DataPacket = 
+  | { type: 'JOIN_REQUEST'; name: string }
+  | { type: 'JOIN_ACCEPT'; players: Player[]; gameState: GameState }
+  | { type: 'PLAYER_JOINED'; player: Player }
+  | { type: 'GAME_START' }
+  | { type: 'STATE_UPDATE'; ropePosition: number }
+  | { type: 'GAME_OVER'; winnerName: string }
+  | { type: 'OPPONENT_LEFT' };
 
 export default function App() {
   // --- State ---
   const [view, setView] = useState<'lobby' | 'countdown' | 'game' | 'win'>('lobby');
-  const [roomID, setRoomID] = useState('');
+  
+  // PeerJS
+  const [myPeerId, setMyPeerId] = useState<string>('');
+  const [hostPeerId, setHostPeerId] = useState<string>('');
+  const [isHost, setIsHost] = useState(false);
+  const peerRef = useRef<Peer | null>(null);
+  const connRef = useRef<DataConnection | null>(null); // For guest: connection to host. For host: connection to guest.
+  
+  // Game Data
   const [playerName, setPlayerName] = useState('');
   const [players, setPlayers] = useState<Player[]>([]);
   const [myTeam, setMyTeam] = useState<1 | 2 | null>(null);
@@ -45,186 +65,173 @@ export default function App() {
   const [isVoiceConnected, setIsVoiceConnected] = useState(false);
   const localAudioRef = useRef<HTMLAudioElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
-  const peerConnection = useRef<RTCPeerConnection | null>(null);
   const localStream = useRef<MediaStream | null>(null);
+  const callRef = useRef<MediaConnection | null>(null);
 
-  // --- Effects ---
+  // --- Initialization ---
 
   useEffect(() => {
-    // Check URL for room ID
-    const params = new URLSearchParams(window.location.search);
-    const roomParam = params.get('room');
-    if (roomParam) {
-      setRoomID(roomParam);
-    }
+    // 1. Initialize Peer
+    const peer = new Peer();
+    peerRef.current = peer;
 
-    // Socket Listeners
-    socket.on('connect', () => {
-        console.log("Connected to server", socket.id);
+    peer.on('open', (id) => {
+      console.log('My Peer ID is: ' + id);
+      setMyPeerId(id);
+      
+      // Check URL for room (host ID)
+      const params = new URLSearchParams(window.location.search);
+      const roomParam = params.get('room');
+      if (roomParam) {
+        setHostPeerId(roomParam);
+        // We are a guest, wait for user to click "Join"
+      } else {
+        // We are likely the host (if we create a room)
+      }
     });
 
-    socket.on('player_joined', ({ players }: { players: Player[] }) => {
-      setPlayers(players);
-      const me = players.find(p => p.id === socket.id);
-      if (me) setMyTeam(me.team);
+    peer.on('connection', (conn) => {
+      // Handle incoming data connection
+      conn.on('data', (data) => handleData(data as DataPacket, conn));
+      conn.on('open', () => {
+          console.log("Connection opened with", conn.peer);
+          // If I am host and someone connects, I store the ref
+          if (!connRef.current) connRef.current = conn; 
+      });
+      conn.on('close', () => {
+          alert("Opponent disconnected");
+          window.location.reload();
+      });
     });
 
-    socket.on('joined_success', ({ player }: { player: Player }) => {
-        setMyTeam(player.team);
-    });
-
-    socket.on('game_started', () => {
-      setView('countdown');
-      let count = 3;
-      setCountdown(3);
-      const interval = setInterval(() => {
-        count--;
-        setCountdown(count);
-        if (count <= 0) {
-          clearInterval(interval);
-          setView('game');
-          loadNextQuestion();
+    peer.on('call', (call) => {
+      // Answer incoming voice call automatically
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+        localStream.current = stream;
+        if (localAudioRef.current) {
+            localAudioRef.current.srcObject = stream;
+            localAudioRef.current.muted = true; // Mute local echo
         }
-      }, 1000);
-    });
-
-    socket.on('state_update', ({ ropePosition }) => {
-      setRopePosition(ropePosition);
-    });
-
-    socket.on('game_over', ({ winnerName }) => {
-      setWinnerName(winnerName);
-      setView('win');
-    });
-
-    socket.on('opponent_left', () => {
-      alert('Opponent disconnected!');
-      window.location.reload();
-    });
-
-    // WebRTC Listeners
-    socket.on('offer', async (payload) => {
-      if (!peerConnection.current) createPeerConnection(payload.caller);
-      try {
-        await peerConnection.current?.setRemoteDescription(payload.sdp);
-        const answer = await peerConnection.current?.createAnswer();
-        await peerConnection.current?.setLocalDescription(answer);
-        socket.emit('answer', { target: payload.caller, sdp: answer });
-      } catch (e) {
-        console.error("Error handling offer", e);
-      }
-    });
-
-    socket.on('answer', async (payload) => {
-      try {
-        await peerConnection.current?.setRemoteDescription(payload.sdp);
-      } catch (e) {
-        console.error("Error handling answer", e);
-      }
-    });
-
-    socket.on('ice-candidate', async (payload) => {
-      try {
-        if (payload.candidate) {
-            await peerConnection.current?.addIceCandidate(payload.candidate);
-        }
-      } catch (e) {
-        console.error("Error adding ice candidate", e);
-      }
+        
+        call.answer(stream); // Answer the call with an A/V stream.
+        call.on('stream', (remoteStream) => {
+            if (remoteAudioRef.current) {
+                remoteAudioRef.current.srcObject = remoteStream;
+            }
+        });
+        callRef.current = call;
+        setIsVoiceConnected(true);
+      }).catch(err => {
+          console.error("Failed to get local stream", err);
+      });
     });
 
     return () => {
-      socket.off('player_joined');
-      socket.off('game_started');
-      socket.off('state_update');
-      socket.off('game_over');
-      socket.off('offer');
-      socket.off('answer');
-      socket.off('ice-candidate');
+      peer.destroy();
     };
   }, []);
 
-  // --- Logic ---
+  // --- Data Handling ---
 
-  const createPeerConnection = (targetId: string) => {
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    });
+  const handleData = (data: DataPacket, conn: DataConnection) => {
+    console.log("Received data:", data);
+    
+    switch (data.type) {
+      case 'JOIN_REQUEST':
+        // I am Host, received join request
+        if (players.length >= 2) return; // Room full
+        
+        const newPlayer: Player = { id: conn.peer, name: data.name, team: 2 };
+        const updatedPlayers = [...players, newPlayer];
+        setPlayers(updatedPlayers);
+        
+        // Send Accept
+        conn.send({ 
+            type: 'JOIN_ACCEPT', 
+            players: updatedPlayers,
+            gameState: { ropePosition, winner: null, gameStarted: false }
+        });
+        
+        // Save connection
+        connRef.current = conn;
+        break;
 
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        socket.emit('ice-candidate', { target: targetId, candidate: event.candidate });
-      }
-    };
+      case 'JOIN_ACCEPT':
+        // I am Guest, received acceptance
+        setPlayers(data.players);
+        setRopePosition(data.gameState.ropePosition);
+        setMyTeam(2); // Guest is always Team 2 (Left/Red)
+        connRef.current = conn;
+        break;
 
-    pc.ontrack = (event) => {
-      if (remoteAudioRef.current) {
-        remoteAudioRef.current.srcObject = event.streams[0];
-      }
-    };
+      case 'GAME_START':
+        startCountdown();
+        break;
 
-    if (localStream.current) {
-      localStream.current.getTracks().forEach(track => {
-        pc.addTrack(track, localStream.current!);
-      });
+      case 'STATE_UPDATE':
+        setRopePosition(data.ropePosition);
+        break;
+
+      case 'GAME_OVER':
+        setWinnerName(data.winnerName);
+        setView('win');
+        break;
+        
+      case 'OPPONENT_LEFT':
+        alert("Opponent left!");
+        window.location.reload();
+        break;
     }
-
-    peerConnection.current = pc;
-    return pc;
   };
 
-  const startVoiceChat = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      localStream.current = stream;
-      if (localAudioRef.current) {
-        localAudioRef.current.srcObject = stream;
-        localAudioRef.current.muted = true; // Mute local echo
-      }
-      setIsVoiceConnected(true);
+  // --- Actions ---
 
-      // Initiate call if we have an opponent
-      const opponent = players.find(p => p.id !== socket.id);
-      if (opponent) {
-        const pc = createPeerConnection(opponent.id);
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit('offer', { target: opponent.id, caller: socket.id, sdp: offer });
-      }
-    } catch (err) {
-      console.error("Error accessing microphone:", err);
-      alert("Could not access microphone.");
-    }
-  };
-
-  const toggleMute = () => {
-    if (localStream.current) {
-      localStream.current.getAudioTracks().forEach(track => {
-        track.enabled = !track.enabled;
-      });
-      setIsMuted(!isMuted);
-    }
+  const createRoom = () => {
+    if (!playerName) return alert("Please enter name");
+    setIsHost(true);
+    setMyTeam(1); // Host is Team 1 (Right/Blue)
+    const me: Player = { id: myPeerId, name: playerName, team: 1 };
+    setPlayers([me]);
+    // URL update
+    const url = new URL(window.location.href);
+    url.searchParams.set('room', myPeerId);
+    window.history.pushState({}, '', url.toString());
   };
 
   const joinRoom = () => {
-    if (!playerName || !roomID) return alert("Please enter name and room ID");
-    socket.emit('join_room', { roomId: roomID, name: playerName });
-  };
-
-  const createRoom = () => {
-    const newRoomId = Math.random().toString(36).substring(2, 7).toUpperCase();
-    setRoomID(newRoomId);
-    // Don't join yet, let user enter name
+    if (!playerName) return alert("Please enter name");
+    if (!hostPeerId) return alert("No Room ID found");
+    
+    const conn = peerRef.current?.connect(hostPeerId);
+    if (conn) {
+        conn.on('open', () => {
+            conn.send({ type: 'JOIN_REQUEST', name: playerName });
+        });
+        conn.on('data', (data) => handleData(data as DataPacket, conn));
+        connRef.current = conn;
+    }
   };
 
   const startGame = () => {
-    socket.emit('start_game', { roomId: roomID });
+    if (connRef.current) {
+        connRef.current.send({ type: 'GAME_START' });
+        startCountdown();
+    }
   };
 
-  const copyInvite = () => {
-    const url = `${window.location.origin}?room=${roomID}`;
-    navigator.clipboard.writeText(url);
-    alert("Link copied to clipboard!");
+  const startCountdown = () => {
+    setView('countdown');
+    let count = 3;
+    setCountdown(3);
+    const interval = setInterval(() => {
+      count--;
+      setCountdown(count);
+      if (count <= 0) {
+        clearInterval(interval);
+        setView('game');
+        loadNextQuestion();
+      }
+    }, 1000);
   };
 
   const loadNextQuestion = () => {
@@ -259,12 +266,82 @@ export default function App() {
         delta = correct ? -5 : 5;
     }
 
-    socket.emit('update_score', { roomId: roomID, delta });
+    // Update local state
+    let newPos = ropePosition + delta;
+    if (newPos > 95) newPos = 95;
+    if (newPos < 5) newPos = 5;
+    setRopePosition(newPos);
 
-    setTimeout(() => {
-      loadNextQuestion();
-    }, 1000);
+    // Send update
+    if (connRef.current) {
+        connRef.current.send({ type: 'STATE_UPDATE', ropePosition: newPos });
+    }
+
+    // Check Win
+    if (newPos >= 90) {
+        const winner = players.find(p => p.team === 1)?.name || "Team 1";
+        finishGame(winner);
+    } else if (newPos <= 10) {
+        const winner = players.find(p => p.team === 2)?.name || "Team 2";
+        finishGame(winner);
+    } else {
+        setTimeout(() => {
+            loadNextQuestion();
+        }, 1000);
+    }
   };
+
+  const finishGame = (winner: string) => {
+      setWinnerName(winner);
+      setView('win');
+      if (connRef.current) {
+          connRef.current.send({ type: 'GAME_OVER', winnerName: winner });
+      }
+  };
+
+  // --- Voice Chat ---
+
+  const startVoiceCall = () => {
+      if (!connRef.current) return;
+      
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+          localStream.current = stream;
+          if (localAudioRef.current) {
+              localAudioRef.current.srcObject = stream;
+              localAudioRef.current.muted = true;
+          }
+          
+          const call = peerRef.current?.call(connRef.current!.peer, stream);
+          if (call) {
+              call.on('stream', (remoteStream) => {
+                  if (remoteAudioRef.current) {
+                      remoteAudioRef.current.srcObject = remoteStream;
+                  }
+              });
+              callRef.current = call;
+              setIsVoiceConnected(true);
+          }
+      }).catch(err => {
+          console.error("Mic error", err);
+          alert("Could not access microphone");
+      });
+  };
+
+  const toggleMute = () => {
+    if (localStream.current) {
+      localStream.current.getAudioTracks().forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsMuted(!isMuted);
+    }
+  };
+
+  const copyInvite = () => {
+    const url = `${window.location.origin}?room=${myPeerId}`;
+    navigator.clipboard.writeText(url);
+    alert("Link copied! Send it to your friend.");
+  };
+
 
   // --- Render ---
 
@@ -282,24 +359,26 @@ export default function App() {
               value={playerName} 
               onChange={e => setPlayerName(e.target.value)} 
             />
-            
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-                <input 
-                type="text" 
-                placeholder="Room ID" 
-                value={roomID} 
-                onChange={e => setRoomID(e.target.value)} 
-                style={{ width: '60%' }}
-                />
-                <button className="btn-start-game" onClick={joinRoom} style={{ marginTop: 0, fontSize: '14px' }}>
-                    Join
-                </button>
-            </div>
 
-            <p>یان</p>
-            <button className="btn-copy-link" onClick={createRoom}>
-                 Create New Room
-            </button>
+            {/* If URL has room, show Join button. Else show Create button */}
+            {hostPeerId ? (
+                <button className="btn-start-game" onClick={joinRoom}>
+                    Join Game
+                </button>
+            ) : (
+                !isHost ? (
+                    <button className="btn-copy-link" onClick={createRoom}>
+                        Create New Room
+                    </button>
+                ) : (
+                    <div style={{marginTop: '10px'}}>
+                        <p style={{color: 'green'}}>Room Created! Waiting for friend...</p>
+                        <button className="btn-copy-link" onClick={copyInvite} style={{display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', margin: '10px auto'}}>
+                            <Share2 size={16}/> Copy Invite Link
+                        </button>
+                    </div>
+                )
+            )}
 
             {players.length > 0 && (
                 <div style={{ marginTop: '20px', textAlign: 'left' }}>
@@ -307,23 +386,21 @@ export default function App() {
                     <ul>
                         {players.map(p => (
                             <li key={p.id} style={{ color: p.team === 1 ? '#1565c0' : '#c62828' }}>
-                                {p.name} {p.id === socket.id ? '(You)' : ''}
+                                {p.name} {p.id === myPeerId ? '(You)' : ''}
                             </li>
                         ))}
                     </ul>
                 </div>
             )}
 
-            {players.length === 2 && (
+            {players.length === 2 && isHost && (
                 <button className="btn-start-game" onClick={startGame}>
                     دەستپێکردن
                 </button>
             )}
-             {players.length > 0 && (
-                 <button className="btn-copy-link" onClick={copyInvite} style={{display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', margin: '10px auto'}}>
-                    <Share2 size={16}/> Invite Friend
-                 </button>
-             )}
+            {players.length === 2 && !isHost && (
+                <p>Waiting for host to start...</p>
+            )}
           </div>
         </div>
       </div>
@@ -415,7 +492,7 @@ export default function App() {
             {/* Voice Controls */}
             <div className="voice-controls">
                 {!isVoiceConnected ? (
-                    <button className="voice-btn" onClick={startVoiceChat} title="Join Voice Chat">
+                    <button className="voice-btn" onClick={startVoiceCall} title="Join Voice Chat">
                         <Phone />
                     </button>
                 ) : (
