@@ -35,8 +35,10 @@ type DataPacket =
   | { type: 'OPPONENT_LEFT' };
 
 export default function App() {
+
   // --- State ---
   const [view, setView] = useState<'lobby' | 'countdown' | 'game' | 'win'>('lobby');
+  const [isConnecting, setIsConnecting] = useState(false);
   
   // PeerJS
   const [myPeerId, setMyPeerId] = useState<string>('');
@@ -71,8 +73,15 @@ export default function App() {
   // --- Initialization ---
 
   useEffect(() => {
-    // 1. Initialize Peer
-    const peer = new Peer();
+    // 1. Initialize Peer with STUN servers for better connectivity
+    const peer = new Peer({
+        config: {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
+            ]
+        }
+    });
     peerRef.current = peer;
 
     peer.on('open', (id) => {
@@ -84,9 +93,6 @@ export default function App() {
       const roomParam = params.get('room');
       if (roomParam) {
         setHostPeerId(roomParam);
-        // We are a guest, wait for user to click "Join"
-      } else {
-        // We are likely the host (if we create a room)
       }
     });
 
@@ -95,13 +101,25 @@ export default function App() {
       conn.on('data', (data) => handleData(data as DataPacket, conn));
       conn.on('open', () => {
           console.log("Connection opened with", conn.peer);
-          // If I am host and someone connects, I store the ref
           if (!connRef.current) connRef.current = conn; 
       });
       conn.on('close', () => {
           alert("Opponent disconnected");
           window.location.reload();
       });
+      conn.on('error', (err) => {
+          console.error("Connection error:", err);
+      });
+    });
+
+    peer.on('error', (err) => {
+        console.error("Peer error:", err);
+        if (err.type === 'peer-unavailable') {
+            alert("Room not found or host is offline. Please check the link.");
+            setIsConnecting(false);
+        } else {
+            // alert("Connection error: " + err.type);
+        }
     });
 
     peer.on('call', (call) => {
@@ -158,6 +176,7 @@ export default function App() {
 
       case 'JOIN_ACCEPT':
         // I am Guest, received acceptance
+        setIsConnecting(false); // Stop loading
         setPlayers(data.players);
         setRopePosition(data.gameState.ropePosition);
         setMyTeam(2); // Guest is always Team 2 (Left/Red)
@@ -202,13 +221,43 @@ export default function App() {
     if (!playerName) return alert("Please enter name");
     if (!hostPeerId) return alert("No Room ID found");
     
-    const conn = peerRef.current?.connect(hostPeerId);
+    setIsConnecting(true); // Show loading state
+
+    // Wait a bit to ensure peer is ready if it wasn't
+    if (!peerRef.current || !peerRef.current.id) {
+        alert("Connection not ready yet. Please wait a few seconds and try again.");
+        setIsConnecting(false);
+        return;
+    }
+    
+    const conn = peerRef.current.connect(hostPeerId, {
+        reliable: true
+    });
+
     if (conn) {
         conn.on('open', () => {
+            console.log("Connected to host, sending join request...");
             conn.send({ type: 'JOIN_REQUEST', name: playerName });
         });
         conn.on('data', (data) => handleData(data as DataPacket, conn));
+        conn.on('error', (err) => {
+            console.error("Connection error:", err);
+            alert("Failed to connect to host.");
+            setIsConnecting(false);
+        });
+        conn.on('close', () => {
+             setIsConnecting(false);
+        });
         connRef.current = conn;
+        
+        // Timeout if no response
+        setTimeout(() => {
+            if (players.length === 0) {
+                // If we haven't joined yet (players list empty)
+                setIsConnecting(false);
+                alert("Connection timed out. Host might be offline or busy.");
+            }
+        }, 10000);
     }
   };
 
@@ -362,8 +411,8 @@ export default function App() {
 
             {/* If URL has room, show Join button. Else show Create button */}
             {hostPeerId ? (
-                <button className="btn-start-game" onClick={joinRoom}>
-                    Join Game
+                <button className="btn-start-game" onClick={joinRoom} disabled={isConnecting}>
+                    {isConnecting ? "Connecting..." : "Join Game"}
                 </button>
             ) : (
                 !isHost ? (
