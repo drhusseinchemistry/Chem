@@ -1,0 +1,207 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Rudaw&family=Noto+Naskh+Arabic:wght@700&display=swap');
+
+.game-container {
+    font-family: 'Noto Naskh Arabic', sans-serif;
+    background: #000000;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+    color: white;
+    direction: rtl;
+}
+
+/* --- Overlay --- */
+.overlay {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    z-index: 200; color: white; transition: opacity 0.5s;
+}
+.hidden { opacity: 0; pointer-events: none; display: none !important; }
+
+.setup-box {
+    background: white; padding: 30px; border-radius: 20px;
+    text-align: center; color: #333; box-shadow: 0 0 30px rgba(255,255,255,0.2);
+    width: 80%; max-width: 400px; display: flex; flex-direction: column; gap: 15px;
+    touch-action: auto;
+}
+.setup-box input {
+    padding: 12px; border: 2px solid #ccc; border-radius: 10px;
+    font-size: 16px; font-family: 'Noto Naskh Arabic', sans-serif;
+    text-align: center; outline: none; transition: 0.3s;
+    width: 100%;
+}
+.setup-box input:focus { border-color: #1565c0; }
+.g1-input { border-bottom: 4px solid #1565c0 !important; }
+.g2-input { border-bottom: 4px solid #c62828 !important; }
+.btn-start-game {
+    background: #4caf50; color: white; border: none; padding: 12px 20px;
+    font-size: 18px; border-radius: 10px; cursor: pointer;
+    font-family: 'Noto Naskh Arabic', sans-serif; font-weight: bold; margin-top: 5px;
+}
+.btn-copy-link {
+    background: #2196f3; color: white; border: none; padding: 10px;
+    font-size: 16px; border-radius: 10px; cursor: pointer;
+    font-family: 'Noto Naskh Arabic', sans-serif; margin-top: 5px;
+}
+
+#countdown-container { display: flex; flex-direction: column; align-items: center; color: white; }
+#count-num { font-size: 80px; font-weight: bold; animation: pulse 1s infinite; }
+
+/* --- Win Modal --- */
+.win-modal {
+    background: white; padding: 20px; border-radius: 20px;
+    text-align: center; box-shadow: 0 0 30px rgba(0,255,0,0.5);
+    width: 80%; max-width: 350px; color: #333;
+    transform: scale(0.8); transition: transform 0.3s;
+}
+.show-modal .win-modal { transform: scale(1); }
+.btn-restart {
+    background: #4caf50; color: white; border: none; padding: 10px 20px;
+    font-size: 18px; border-radius: 50px; cursor: pointer; margin-top: 15px;
+    font-family: 'Noto Naskh Arabic', sans-serif;
+}
+
+/* --- Game Area --- */
+.game-wrapper {
+    display: flex; justify-content: space-between; align-items: center;
+    height: 100%; padding: 10px; position: relative; width: 100%;
+    touch-action: none;
+}
+
+/* --- Boxes --- */
+.calc-box {
+    background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(5px);
+    border-radius: 20px; padding: 10px; width: 25%; min-width: 220px;
+    box-shadow: 0 5px 15px rgba(255,255,255,0.1); display: flex; flex-direction: column;
+    gap: 10px; z-index: 20; max-height: 90vh;
+}
+
+.q-display {
+    color: white; font-size: 18px; font-weight: bold; text-align: center;
+    padding: 10px; border-radius: 12px; min-height: 60px;
+    display: flex; align-items: center; justify-content: center;
+    word-break: break-word; line-height: 1.3; direction: rtl;
+}
+
+.ltr-text { direction: ltr; unicode-bidi: embed; }
+.rtl-text { direction: rtl; }
+.blue-theme { background: #1565c0; }
+.red-theme { background: #c62828; }
+
+.options-grid { display: flex; flex-direction: column; gap: 6px; flex: 1; justify-content: center; }
+.option-btn {
+    background: white; border: 2px solid #ddd; border-radius: 10px;
+    padding: 8px 5px; font-size: 16px; font-weight: bold; color: #333;
+    cursor: pointer; transition: all 0.1s; text-align: center; width: 100%;
+    font-family: 'Noto Naskh Arabic', sans-serif;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+}
+.option-btn:active { transform: translateY(3px); }
+.option-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+
+.correct-anim { background: #4caf50 !important; color: white !important; border-color: #2e7d32 !important; }
+.wrong-anim { background: #ff5252 !important; color: white !important; border-color: #d32f2f !important; animation: shake 0.4s; }
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(5px); }
+    75% { transform: translateX(-5px); }
+}
+
+/* --- Center Stage --- */
+.center-stage {
+    flex: 1; height: 100%; position: relative;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.title {
+    font-size: 26px; color: #fff; font-weight: bold;
+    position: absolute; top: 10%; z-index: 50;
+    padding: 10px 20px;
+    background: rgba(255, 255, 255, 0.1); border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.3);
+    display: flex; align-items: center; gap: 10px;
+    transition: 0.3s; text-shadow: 0 0 10px rgba(255,255,255,0.5);
+    pointer-events: auto; cursor: pointer;
+}
+.title:hover { background: rgba(255, 255, 255, 0.2); }
+
+.divider {
+    position: absolute; top: 0; bottom: 0; left: 50%; width: 0;
+    border-left: 3px dashed rgba(255,255,255,0.3); transform: translateX(-50%); z-index: 0;
+}
+
+.tug-container {
+    position: absolute;
+    left: 50%; top: 55%;
+    width: 600px;
+    height: auto;
+    transform: translate(-50%, -50%);
+    transition: left 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tug-image {
+    width: 100%;
+    height: auto;
+    display: block;
+    filter: drop-shadow(0 0 15px rgba(255,255,255,0.3)); 
+}
+
+.center-marker {
+    position: absolute;
+    width: 20px; height: 20px;
+    background: #ffeb3b; border: 3px solid #f57f17;
+    border-radius: 50%;
+    left: 50%; top: 58%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    box-shadow: 0 0 10px rgba(255, 193, 7, 0.8);
+}
+
+/* Voice Chat Controls */
+.voice-controls {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    display: flex;
+    gap: 10px;
+    pointer-events: auto;
+}
+
+.voice-btn {
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 50%;
+    width: 50px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: white;
+    font-size: 20px;
+}
+
+.voice-btn.active {
+    background: #4caf50;
+    border-color: #4caf50;
+}
+
+.voice-btn.muted {
+    background: #f44336;
+    border-color: #f44336;
+}
