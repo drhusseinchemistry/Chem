@@ -432,6 +432,11 @@ export default function App() {
   const createRoom = async () => {
       if (!playerName) return alert("Please enter name");
       
+      // Request BOTH Audio and Video permissions immediately
+      if (!localStream.current) {
+          await setupLocalStream(true);
+      }
+
       const newRoomId = Math.random().toString(36).substring(2, 8).toUpperCase();
       setRoomId(newRoomId);
       
@@ -469,6 +474,11 @@ export default function App() {
   const joinRoom = async () => {
       if (!playerName) return alert("Please enter name");
       if (!roomId) return alert("No Room ID");
+
+      // Request BOTH Audio and Video permissions immediately
+      if (!localStream.current) {
+          await setupLocalStream(true);
+      }
 
       const roomRef = ref(db, `rooms/${roomId}`);
       const snapshot = await get(roomRef);
