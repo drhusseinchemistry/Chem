@@ -328,7 +328,7 @@ export default function App() {
               onChange={e => setPlayerName(e.target.value)} 
             />
 
-            {roomId ? (
+            {roomId && !isHost ? (
                 <button className="btn-start-game" onClick={joinRoom}>
                     Join Game
                 </button>
