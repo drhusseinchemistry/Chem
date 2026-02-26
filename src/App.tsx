@@ -81,6 +81,23 @@ export default function App() {
   const localStream = useRef<MediaStream | null>(null);
   const peerRef = useRef<Peer | null>(null);
 
+  const setupLocalStream = async () => {
+      try {
+          if (localStream.current) return localStream.current;
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          localStream.current = stream;
+          if (localAudioRef.current) {
+              localAudioRef.current.srcObject = stream;
+              localAudioRef.current.muted = true;
+          }
+          return stream;
+      } catch (err) {
+          console.error("Failed to get local stream", err);
+          alert("Microphone access denied. Voice chat will not work.");
+          return null;
+      }
+  };
+
   // --- Initialization ---
 
   useEffect(() => {
@@ -99,27 +116,52 @@ export default function App() {
         setMyPeerId(id);
     });
 
-    peer.on('call', (call) => {
-        navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-            localStream.current = stream;
-            if (localAudioRef.current) {
-                localAudioRef.current.srcObject = stream;
-                localAudioRef.current.muted = true;
-            }
+    peer.on('call', async (call) => {
+        let stream = localStream.current;
+        if (!stream) {
+            stream = await setupLocalStream();
+        }
+        if (stream) {
             call.answer(stream);
             call.on('stream', (remoteStream) => {
                 if (remoteAudioRef.current) {
                     remoteAudioRef.current.srcObject = remoteStream;
+                    // Ensure we try to play it
+                    remoteAudioRef.current.play().catch(e => console.error("Auto-play failed", e));
                 }
             });
             setIsVoiceConnected(true);
-        }).catch(err => console.error("Mic error", err));
+        }
     });
 
     return () => {
         peer.destroy();
     };
   }, []);
+
+  // ... (Firebase Init) ...
+
+  // ... (Game Logic) ...
+
+  const connectVoice = async (remotePeerId: string) => {
+      let stream = localStream.current;
+      if (!stream) {
+          stream = await setupLocalStream();
+      }
+      
+      if (stream) {
+          const call = peerRef.current?.call(remotePeerId, stream);
+          if (call) {
+              call.on('stream', (remoteStream) => {
+                  if (remoteAudioRef.current) {
+                      remoteAudioRef.current.srcObject = remoteStream;
+                      remoteAudioRef.current.play().catch(e => console.error("Auto-play failed", e));
+                  }
+              });
+              setIsVoiceConnected(true);
+          }
+      }
+  };
 
   useEffect(() => {
     // Initialize Firebase immediately
@@ -467,25 +509,6 @@ export default function App() {
               if (myTeam) loadNextQuestionForTeam(myTeam);
           }, 1000);
       }
-  };
-
-  const connectVoice = (remotePeerId: string) => {
-      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-          localStream.current = stream;
-          if (localAudioRef.current) {
-              localAudioRef.current.srcObject = stream;
-              localAudioRef.current.muted = true;
-          }
-          const call = peerRef.current?.call(remotePeerId, stream);
-          if (call) {
-              call.on('stream', (remoteStream) => {
-                  if (remoteAudioRef.current) {
-                      remoteAudioRef.current.srcObject = remoteStream;
-                  }
-              });
-              setIsVoiceConnected(true);
-          }
-      }).catch(err => console.error("Mic error", err));
   };
 
   const toggleMute = () => {
