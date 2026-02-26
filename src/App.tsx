@@ -108,6 +108,30 @@ export default function App() {
                   if (me) {
                       setMyTeam(me.team);
                       setIsHost(me.isHost);
+
+                      // Auto-start game if 2 players are present and I am the host
+                      if (me.isHost && playerList.length === 2 && !data.gameState?.gameStarted) {
+                          // Small delay to ensure UI updates first
+                          setTimeout(() => {
+                              update(ref(db, `rooms/${roomId}/gameState`), {
+                                  gameStarted: true
+                              });
+                              
+                              // Load first question
+                              const randomIndex = Math.floor(Math.random() * defaultQuizData.length);
+                              const q = defaultQuizData[randomIndex];
+                              const opts = [...q.options];
+                              for (let i = opts.length - 1; i > 0; i--) {
+                                  const j = Math.floor(Math.random() * (i + 1));
+                                  [opts[i], opts[j]] = [opts[j], opts[i]];
+                              }
+                              
+                              update(ref(db, `rooms/${roomId}/gameState`), {
+                                  currentQuestionIndex: randomIndex,
+                                  shuffledOptions: opts
+                              });
+                          }, 1000);
+                      }
                   }
               }
 
