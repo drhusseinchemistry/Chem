@@ -76,6 +76,9 @@ export default function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [isVoiceConnected, setIsVoiceConnected] = useState(false);
+  const [hasLocalStream, setHasLocalStream] = useState(false); // Track if stream is active
+  const [mediaError, setMediaError] = useState<string | null>(null); // Track permission errors
+  
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   // Keep audio refs for fallback or just use video elements for audio too (video elements play audio)
@@ -83,12 +86,25 @@ export default function App() {
   const localStream = useRef<MediaStream | null>(null);
   const peerRef = useRef<Peer | null>(null);
 
-  const setupLocalStream = async () => {
+  const setupLocalStream = async (retry = false) => {
       try {
-          if (localStream.current) return localStream.current;
-          // Request both audio and video
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+          if (localStream.current && !retry) return localStream.current;
+          
+          setMediaError(null);
+          let stream: MediaStream;
+          
+          try {
+              // Try Video + Audio first
+              stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+          } catch (err) {
+              console.warn("Video+Audio failed, trying Audio only...", err);
+              // Fallback to Audio only
+              stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          }
+
           localStream.current = stream;
+          setHasLocalStream(true);
+          
           if (localVideoRef.current) {
               localVideoRef.current.srcObject = stream;
               localVideoRef.current.muted = true; // Mute local video to prevent echo
@@ -96,7 +112,8 @@ export default function App() {
           return stream;
       } catch (err) {
           console.error("Failed to get local stream", err);
-          alert("Camera/Microphone access denied. Media chat will not work.");
+          setMediaError("Access denied");
+          setHasLocalStream(false);
           return null;
       }
   };
@@ -630,12 +647,33 @@ export default function App() {
                 overflow: 'hidden',
                 border: '3px solid #c62828',
                 background: '#000',
-                zIndex: 20
+                zIndex: 20,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
             }}>
                 {/* Team 2's Video */}
-                {/* If I am Team 2, this is ME (Local). If I am Team 1, this is OPPONENT (Remote). */}
                 {myTeam === 2 ? (
-                    <video ref={localVideoRef} autoPlay muted playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                    <>
+                        <video ref={localVideoRef} autoPlay muted playsInline style={{width: '100%', height: '100%', objectFit: 'cover', display: hasLocalStream ? 'block' : 'none'}} />
+                        {!hasLocalStream && (
+                            <button 
+                                onClick={() => setupLocalStream(true)}
+                                style={{
+                                    fontSize: '10px', 
+                                    padding: '5px', 
+                                    background: '#d32f2f', 
+                                    color: 'white', 
+                                    border: 'none', 
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    textAlign: 'center'
+                                }}
+                            >
+                                {mediaError ? "Retry Cam" : "Enable Cam"}
+                            </button>
+                        )}
+                    </>
                 ) : (
                     <video ref={remoteVideoRef} autoPlay playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
                 )}
@@ -752,12 +790,33 @@ export default function App() {
                 overflow: 'hidden',
                 border: '3px solid #1565c0',
                 background: '#000',
-                zIndex: 20
+                zIndex: 20,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
             }}>
                  {/* Team 1's Video */}
-                 {/* If I am Team 1, this is ME (Local). If I am Team 2, this is OPPONENT (Remote). */}
                 {myTeam === 1 ? (
-                    <video ref={localVideoRef} autoPlay muted playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                    <>
+                        <video ref={localVideoRef} autoPlay muted playsInline style={{width: '100%', height: '100%', objectFit: 'cover', display: hasLocalStream ? 'block' : 'none'}} />
+                        {!hasLocalStream && (
+                            <button 
+                                onClick={() => setupLocalStream(true)}
+                                style={{
+                                    fontSize: '10px', 
+                                    padding: '5px', 
+                                    background: '#1565c0', 
+                                    color: 'white', 
+                                    border: 'none', 
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    textAlign: 'center'
+                                }}
+                            >
+                                {mediaError ? "Retry Cam" : "Enable Cam"}
+                            </button>
+                        )}
+                    </>
                 ) : (
                     <video ref={remoteVideoRef} autoPlay playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
                 )}
