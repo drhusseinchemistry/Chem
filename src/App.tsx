@@ -94,12 +94,19 @@ export default function App() {
           let stream: MediaStream;
           
           try {
-              // Try Video + Audio first
-              stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+              // Try Video + Audio first with mobile constraints
+              stream = await navigator.mediaDevices.getUserMedia({ 
+                  audio: true, 
+                  video: { facingMode: "user" } 
+              });
           } catch (err) {
-              console.warn("Video+Audio failed, trying Audio only...", err);
-              // Fallback to Audio only
-              stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              console.warn("Video+Audio failed, trying generic video...", err);
+              try {
+                  stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+              } catch (err2) {
+                   console.warn("Generic video failed, trying Audio only...", err2);
+                   stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              }
           }
 
           localStream.current = stream;
@@ -130,11 +137,13 @@ export default function App() {
   // --- Initialization ---
 
   useEffect(() => {
-    // Initialize PeerJS for Voice
+    // Initialize PeerJS for Voice/Video
     const peer = new Peer({
         config: {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
                 { urls: 'stun:global.stun.twilio.com:3478' }
             ]
         }
@@ -142,7 +151,13 @@ export default function App() {
     peerRef.current = peer;
 
     peer.on('open', (id) => {
+        console.log("My Peer ID:", id);
         setMyPeerId(id);
+    });
+
+    peer.on('error', (err) => {
+        console.error("PeerJS Error:", err);
+        setMediaError("Connection Error: " + err.type);
     });
 
     peer.on('call', async (call) => {
@@ -173,21 +188,33 @@ export default function App() {
   // ... (Game Logic) ...
 
   const connectVoice = async (remotePeerId: string) => {
+      console.log("Connecting to:", remotePeerId);
+      
       let stream = localStream.current;
       if (!stream) {
           stream = await setupLocalStream();
       }
       
-      if (stream) {
-          const call = peerRef.current?.call(remotePeerId, stream);
-          if (call) {
+      if (stream && peerRef.current) {
+          try {
+              const call = peerRef.current.call(remotePeerId, stream);
+              
               call.on('stream', (remoteStream) => {
+                  console.log("Received remote stream");
                   if (remoteVideoRef.current) {
                       remoteVideoRef.current.srcObject = remoteStream;
                       remoteVideoRef.current.play().catch(e => console.error("Auto-play failed", e));
                   }
               });
+              
+              call.on('error', (err) => {
+                  console.error("Call error:", err);
+                  setMediaError("Call failed");
+              });
+
               setIsVoiceConnected(true);
+          } catch (e) {
+              console.error("Call failed to start", e);
           }
       }
   };
@@ -650,7 +677,8 @@ export default function App() {
                 zIndex: 20,
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center'
+                justifyContent: 'center',
+                flexDirection: 'column'
             }}>
                 {/* Team 2's Video */}
                 {myTeam === 2 ? (
@@ -659,23 +687,27 @@ export default function App() {
                         {!hasLocalStream && (
                             <button 
                                 onClick={() => setupLocalStream(true)}
-                                style={{
-                                    fontSize: '10px', 
-                                    padding: '5px', 
-                                    background: '#d32f2f', 
-                                    color: 'white', 
-                                    border: 'none', 
-                                    borderRadius: '4px',
-                                    cursor: 'pointer',
-                                    textAlign: 'center'
-                                }}
+                                style={{fontSize: '10px', padding: '5px', background: '#d32f2f', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
                             >
-                                {mediaError ? "Retry Cam" : "Enable Cam"}
+                                {mediaError ? "Retry" : "Cam"}
                             </button>
                         )}
                     </>
                 ) : (
-                    <video ref={remoteVideoRef} autoPlay playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                    <>
+                        <video ref={remoteVideoRef} autoPlay playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                        {!isVoiceConnected && (
+                             <button 
+                                onClick={() => {
+                                    const opponent = players.find(p => p.id !== myId);
+                                    if (opponent?.peerId) connectVoice(opponent.peerId);
+                                }}
+                                style={{position: 'absolute', bottom: 5, fontSize: '8px', padding: '2px', background: 'rgba(0,0,0,0.5)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
+                            >
+                                Connect
+                            </button>
+                        )}
+                    </>
                 )}
             </div>
 
@@ -793,7 +825,8 @@ export default function App() {
                 zIndex: 20,
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center'
+                justifyContent: 'center',
+                flexDirection: 'column'
             }}>
                  {/* Team 1's Video */}
                 {myTeam === 1 ? (
@@ -802,23 +835,27 @@ export default function App() {
                         {!hasLocalStream && (
                             <button 
                                 onClick={() => setupLocalStream(true)}
-                                style={{
-                                    fontSize: '10px', 
-                                    padding: '5px', 
-                                    background: '#1565c0', 
-                                    color: 'white', 
-                                    border: 'none', 
-                                    borderRadius: '4px',
-                                    cursor: 'pointer',
-                                    textAlign: 'center'
-                                }}
+                                style={{fontSize: '10px', padding: '5px', background: '#1565c0', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
                             >
-                                {mediaError ? "Retry Cam" : "Enable Cam"}
+                                {mediaError ? "Retry" : "Cam"}
                             </button>
                         )}
                     </>
                 ) : (
-                    <video ref={remoteVideoRef} autoPlay playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                    <>
+                        <video ref={remoteVideoRef} autoPlay playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                        {!isVoiceConnected && (
+                             <button 
+                                onClick={() => {
+                                    const opponent = players.find(p => p.id !== myId);
+                                    if (opponent?.peerId) connectVoice(opponent.peerId);
+                                }}
+                                style={{position: 'absolute', bottom: 5, fontSize: '8px', padding: '2px', background: 'rgba(0,0,0,0.5)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
+                            >
+                                Connect
+                            </button>
+                        )}
+                    </>
                 )}
             </div>
 
