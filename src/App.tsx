@@ -100,15 +100,23 @@ export default function App() {
           
           try {
               if (enableVideo) {
-                  // High Quality Video
-                  stream = await navigator.mediaDevices.getUserMedia({ 
-                      audio: true, 
-                      video: { 
-                          facingMode: "user",
-                          width: { ideal: 1280 },
-                          height: { ideal: 720 }
-                      } 
-                  });
+                  // Try High Quality first, but catch error and fallback
+                  try {
+                      stream = await navigator.mediaDevices.getUserMedia({ 
+                          audio: true, 
+                          video: { 
+                              facingMode: "user",
+                              width: { ideal: 1280 },
+                              height: { ideal: 720 }
+                          } 
+                      });
+                  } catch (e) {
+                      console.warn("High-res failed, trying basic video", e);
+                      stream = await navigator.mediaDevices.getUserMedia({ 
+                          audio: true, 
+                          video: { facingMode: "user" } 
+                      });
+                  }
                   setIsVideoOff(false);
               } else {
                   // Audio Only initially
@@ -198,6 +206,8 @@ export default function App() {
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
                 { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' },
                 { urls: 'stun:global.stun.twilio.com:3478' }
             ]
         }
@@ -241,6 +251,10 @@ export default function App() {
 
   // ... (Game Logic) ...
 
+  const [remoteStreamActive, setRemoteStreamActive] = useState(false); // Track if remote stream is playing
+
+  // ...
+
   const connectVoice = async (remotePeerId: string) => {
       console.log("Connecting to:", remotePeerId);
       
@@ -258,7 +272,12 @@ export default function App() {
                   console.log("Received remote stream");
                   if (remoteVideoRef.current) {
                       remoteVideoRef.current.srcObject = remoteStream;
-                      remoteVideoRef.current.play().catch(e => console.error("Auto-play failed", e));
+                      remoteVideoRef.current.play()
+                        .then(() => setRemoteStreamActive(true))
+                        .catch(e => {
+                            console.error("Auto-play failed", e);
+                            setRemoteStreamActive(false); // Show play button
+                        });
                   }
               });
               
