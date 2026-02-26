@@ -78,35 +78,63 @@ export default function App() {
   const [isVoiceConnected, setIsVoiceConnected] = useState(false);
   const [hasLocalStream, setHasLocalStream] = useState(false); // Track if stream is active
   const [mediaError, setMediaError] = useState<string | null>(null); // Track permission errors
+  const [expandedVideo, setExpandedVideo] = useState<'local' | 'remote' | null>(null); // For fullscreen video
   
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  // Keep audio refs for fallback or just use video elements for audio too (video elements play audio)
-  // We can remove audio refs if we use video elements.
   const localStream = useRef<MediaStream | null>(null);
   const peerRef = useRef<Peer | null>(null);
+  const activeCallRef = useRef<any>(null); // Track active call to replace tracks
 
-  const setupLocalStream = async (retry = false) => {
+  const setupLocalStream = async (enableVideo = false) => {
       try {
-          if (localStream.current && !retry) return localStream.current;
+          // If we already have the desired state, return current stream
+          // But if we want video and current stream doesn't have it, we need to upgrade
+          const currentHasVideo = localStream.current?.getVideoTracks().length > 0;
+          if (localStream.current && (currentHasVideo === enableVideo)) {
+              return localStream.current;
+          }
           
           setMediaError(null);
           let stream: MediaStream;
           
           try {
-              // Try Video + Audio first with mobile constraints
-              stream = await navigator.mediaDevices.getUserMedia({ 
-                  audio: true, 
-                  video: { facingMode: "user" } 
-              });
-          } catch (err) {
-              console.warn("Video+Audio failed, trying generic video...", err);
-              try {
-                  stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-              } catch (err2) {
-                   console.warn("Generic video failed, trying Audio only...", err2);
-                   stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              if (enableVideo) {
+                  // High Quality Video
+                  stream = await navigator.mediaDevices.getUserMedia({ 
+                      audio: true, 
+                      video: { 
+                          facingMode: "user",
+                          width: { ideal: 1280 },
+                          height: { ideal: 720 }
+                      } 
+                  });
+                  setIsVideoOff(false);
+              } else {
+                  // Audio Only initially
+                  stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                  setIsVideoOff(true);
               }
+          } catch (err) {
+              console.warn("Media access failed", err);
+              // Fallback logic could go here
+              if (enableVideo) {
+                   // Try without high res constraints if that failed
+                   try {
+                       stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                   } catch (e) {
+                       setMediaError("Camera denied");
+                       return null;
+                   }
+              } else {
+                  setMediaError("Mic denied");
+                  return null;
+              }
+          }
+
+          // Stop old tracks if replacing
+          if (localStream.current) {
+              localStream.current.getTracks().forEach(t => t.stop());
           }
 
           localStream.current = stream;
@@ -114,8 +142,34 @@ export default function App() {
           
           if (localVideoRef.current) {
               localVideoRef.current.srcObject = stream;
-              localVideoRef.current.muted = true; // Mute local video to prevent echo
+              localVideoRef.current.muted = true;
           }
+
+          // Update active call if exists
+          if (activeCallRef.current && activeCallRef.current.peerConnection) {
+              const pc = activeCallRef.current.peerConnection;
+              const senders = pc.getSenders();
+              
+              stream.getTracks().forEach(track => {
+                  const sender = senders.find((s: any) => s.track?.kind === track.kind);
+                  if (sender) {
+                      sender.replaceTrack(track);
+                  } else {
+                      // If adding a new track type (e.g. video to audio-only call), we might need to renegotiate
+                      // PeerJS doesn't handle renegotiation easily. 
+                      // Simple workaround: If we add video, we might need to re-call.
+                      // But let's try replaceTrack first. 
+                      // If sender is missing (e.g. no video sender), we can't just add it without renegotiation.
+                      if (track.kind === 'video') {
+                          // We need to add a transceiver or just re-call
+                          console.log("Adding video track to existing call...");
+                          // For now, let's rely on the user clicking "Connect" again if video doesn't show, 
+                          // or we can force a re-call here if we know the peerId.
+                      }
+                  }
+              });
+          }
+
           return stream;
       } catch (err) {
           console.error("Failed to get local stream", err);
@@ -192,12 +246,13 @@ export default function App() {
       
       let stream = localStream.current;
       if (!stream) {
-          stream = await setupLocalStream();
+          stream = await setupLocalStream(false); // Default to audio only
       }
       
       if (stream && peerRef.current) {
           try {
               const call = peerRef.current.call(remotePeerId, stream);
+              activeCallRef.current = call;
               
               call.on('stream', (remoteStream) => {
                   console.log("Received remote stream");
@@ -664,7 +719,7 @@ export default function App() {
             </div>
             
             {/* Video Circle for Team 2 */}
-            <div className="video-circle" style={{
+            <div className="video-circle" onClick={() => setExpandedVideo(myTeam === 2 ? 'local' : 'remote')} style={{
                 position: 'absolute',
                 top: -50,
                 right: 10,
@@ -678,18 +733,20 @@ export default function App() {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                flexDirection: 'column'
+                flexDirection: 'column',
+                cursor: 'pointer',
+                boxShadow: '0 0 15px rgba(198, 40, 40, 0.6)'
             }}>
                 {/* Team 2's Video */}
                 {myTeam === 2 ? (
                     <>
-                        <video ref={localVideoRef} autoPlay muted playsInline style={{width: '100%', height: '100%', objectFit: 'cover', display: hasLocalStream ? 'block' : 'none'}} />
-                        {!hasLocalStream && (
+                        <video ref={localVideoRef} autoPlay muted playsInline style={{width: '100%', height: '100%', objectFit: 'cover', display: !isVideoOff ? 'block' : 'none'}} />
+                        {isVideoOff && (
                             <button 
-                                onClick={() => setupLocalStream(true)}
+                                onClick={(e) => { e.stopPropagation(); toggleVideo(); }}
                                 style={{fontSize: '10px', padding: '5px', background: '#d32f2f', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
                             >
-                                {mediaError ? "Retry" : "Cam"}
+                                {mediaError ? "Retry" : "Enable Cam"}
                             </button>
                         )}
                     </>
@@ -698,7 +755,8 @@ export default function App() {
                         <video ref={remoteVideoRef} autoPlay playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
                         {!isVoiceConnected && (
                              <button 
-                                onClick={() => {
+                                onClick={(e) => {
+                                    e.stopPropagation();
                                     const opponent = players.find(p => p.id !== myId);
                                     if (opponent?.peerId) connectVoice(opponent.peerId);
                                 }}
@@ -812,7 +870,7 @@ export default function App() {
             </div>
             
             {/* Video Circle for Team 1 */}
-            <div className="video-circle" style={{
+            <div className="video-circle" onClick={() => setExpandedVideo(myTeam === 1 ? 'local' : 'remote')} style={{
                 position: 'absolute',
                 top: -50,
                 left: 10,
@@ -826,18 +884,20 @@ export default function App() {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                flexDirection: 'column'
+                flexDirection: 'column',
+                cursor: 'pointer',
+                boxShadow: '0 0 15px rgba(21, 101, 192, 0.6)'
             }}>
                  {/* Team 1's Video */}
                 {myTeam === 1 ? (
                     <>
-                        <video ref={localVideoRef} autoPlay muted playsInline style={{width: '100%', height: '100%', objectFit: 'cover', display: hasLocalStream ? 'block' : 'none'}} />
-                        {!hasLocalStream && (
+                        <video ref={localVideoRef} autoPlay muted playsInline style={{width: '100%', height: '100%', objectFit: 'cover', display: !isVideoOff ? 'block' : 'none'}} />
+                        {isVideoOff && (
                             <button 
-                                onClick={() => setupLocalStream(true)}
+                                onClick={(e) => { e.stopPropagation(); toggleVideo(); }}
                                 style={{fontSize: '10px', padding: '5px', background: '#1565c0', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
                             >
-                                {mediaError ? "Retry" : "Cam"}
+                                {mediaError ? "Retry" : "Enable Cam"}
                             </button>
                         )}
                     </>
@@ -846,7 +906,8 @@ export default function App() {
                         <video ref={remoteVideoRef} autoPlay playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
                         {!isVoiceConnected && (
                              <button 
-                                onClick={() => {
+                                onClick={(e) => {
+                                    e.stopPropagation();
                                     const opponent = players.find(p => p.id !== myId);
                                     if (opponent?.peerId) connectVoice(opponent.peerId);
                                 }}
