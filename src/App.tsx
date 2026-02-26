@@ -740,42 +740,43 @@ export default function App() {
   return (
     <div className="game-container">
       
-      <div className="game-wrapper">
-        {/* Left Side (Team 2 - Red) */}
-        <div className="calc-box" style={{ opacity: myTeam === 2 ? 1 : 0.8, pointerEvents: myTeam === 2 ? 'auto' : 'none', position: 'relative' }}>
-            <div style={{position: 'absolute', top: -30, left: 10, fontWeight: 'bold', color: '#c62828'}}>
-                Wins: {team2State?.score || 0}
-            </div>
+      {/* Top Bar: Title & Rope */}
+      <div className="top-bar">
+          <div className="title-small">
+              dr.Hussein.Chemistry 🔄
+          </div>
+          <div className="tug-container-top" id="rope-group">
+             <div className="center-marker-top" style={{ left: `${ropePosition}%` }}></div>
+             <svg viewBox="0 0 600 60" className="tug-image" style={{width: '100%', height: '100%'}}>
+                  <line x1="0" y1="30" x2="600" y2="30" stroke="#8d6e63" strokeWidth="6" />
+                  {/* Left Team */}
+                  <circle cx="50" cy="30" r="20" fill="#c62828" />
+                  {/* Right Team */}
+                  <circle cx="550" cy="30" r="20" fill="#1565c0" />
+              </svg>
+          </div>
+      </div>
+
+      <div className="game-wrapper-row">
+        {/* Left Column (Team 2 - Red) */}
+        <div className="player-column">
             
-            {/* Video Circle for Team 2 */}
-            <div className="video-circle" onClick={() => setExpandedVideo(myTeam === 2 ? 'local' : 'remote')} style={{
-                position: 'absolute',
-                top: -50,
-                right: 10,
-                width: '80px',
-                height: '80px',
-                borderRadius: '50%',
-                overflow: 'hidden',
+            {/* Video Circle */}
+            <div className="video-container-static" onClick={() => setExpandedVideo(myTeam === 2 ? 'local' : 'remote')} style={{
                 border: '3px solid #c62828',
-                background: '#000',
-                zIndex: 20,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexDirection: 'column',
-                cursor: 'pointer',
-                boxShadow: '0 0 15px rgba(198, 40, 40, 0.6)'
             }}>
-                {/* Team 2's Video */}
                 {myTeam === 2 ? (
                     <>
                         <video ref={localVideoRef} autoPlay muted playsInline style={{width: '100%', height: '100%', objectFit: 'cover', display: !isVideoOff ? 'block' : 'none'}} />
                         {isVideoOff && (
                             <button 
                                 onClick={(e) => { e.stopPropagation(); toggleVideo(); }}
-                                style={{fontSize: '10px', padding: '5px', background: '#d32f2f', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
+                                style={{
+                                    width: '100%', height: '100%', background: '#333', color: 'white', border: 'none', 
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px'
+                                }}
                             >
-                                {mediaError ? "Retry" : "Enable Cam"}
+                                {mediaError ? "Retry" : "Cam Off"}
                             </button>
                         )}
                     </>
@@ -789,144 +790,96 @@ export default function App() {
                                     const opponent = players.find(p => p.id !== myId);
                                     if (opponent?.peerId) connectVoice(opponent.peerId);
                                 }}
-                                style={{position: 'absolute', bottom: 5, fontSize: '8px', padding: '2px', background: 'rgba(0,0,0,0.5)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
+                                style={{position: 'absolute', bottom: 0, width: '100%', background: 'rgba(0,0,0,0.7)', color: 'white', border: 'none', fontSize: '10px', padding: '2px'}}
                             >
                                 Connect
+                            </button>
+                        )}
+                        {isVoiceConnected && !remoteStreamActive && (
+                             <button 
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    remoteVideoRef.current?.play().then(() => setRemoteStreamActive(true));
+                                }}
+                                style={{position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', color: 'white', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px'}}
+                            >
+                                Play
                             </button>
                         )}
                     </>
                 )}
             </div>
 
-            {myTeam === 2 && (
-                <div style={{
-                    position: 'absolute',
-                    top: 10,
-                    right: 10,
-                    zIndex: 10,
-                    display: 'flex',
-                    gap: '5px'
-                }}>
-                    <button 
-                        className={`voice-btn-mini ${isMuted ? 'muted' : 'active'}`} 
-                        onClick={toggleMute}
-                        style={{
-                            background: isMuted ? '#d32f2f' : '#4caf50',
-                            border: 'none',
-                            borderRadius: '50%',
-                            width: '32px',
-                            height: '32px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: 'white',
-                            cursor: 'pointer'
-                        }}
-                    >
-                        {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
-                    </button>
-                    <button 
-                        className={`voice-btn-mini ${isVideoOff ? 'muted' : 'active'}`} 
-                        onClick={toggleVideo}
-                        style={{
-                            background: isVideoOff ? '#d32f2f' : '#1976d2',
-                            border: 'none',
-                            borderRadius: '50%',
-                            width: '32px',
-                            height: '32px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: 'white',
-                            cursor: 'pointer'
-                        }}
-                    >
-                        {isVideoOff ? <VideoOff size={16} /> : <Video size={16} />}
-                    </button>
+            {/* Question Box */}
+            <div className="calc-box-static" style={{ opacity: myTeam === 2 ? 1 : 0.7, pointerEvents: myTeam === 2 ? 'auto' : 'none' }}>
+                <div className="score-badge-static" style={{color: '#ff8a80'}}>
+                    Wins: {team2State?.score || 0}
                 </div>
-            )}
-            <div className={`q-display red-theme ${team2State?.q && /^[A-Za-z0-9]/.test(team2State.q.text) ? 'ltr-text' : 'rtl-text'}`}>
-                {team2State?.q ? team2State.q.text : "Waiting..."}
-            </div>
-            <div className="options-grid">
-                {team2State?.options.map((opt, idx) => {
-                    let btnClass = "option-btn";
-                    // Only show answer feedback if I am Team 2
-                    if (myTeam === 2 && isAnswered) {
-                        if (opt === team2State.q.correctAnswer) btnClass += " correct-anim";
-                        else if (opt === selectedOption) btnClass += " wrong-anim";
-                    }
-                    return (
+
+                {myTeam === 2 && (
+                    <div style={{display: 'flex', gap: '5px', justifyContent: 'center', marginBottom: '5px'}}>
                         <button 
-                            key={idx} 
-                            className={btnClass}
-                            onClick={() => handleAnswer(opt)}
-                            disabled={myTeam !== 2 || isAnswered}
-                            dir="auto"
+                            className={`voice-btn-mini ${isMuted ? 'muted' : 'active'}`} 
+                            onClick={toggleMute}
+                            style={{background: isMuted ? '#d32f2f' : '#4caf50'}}
                         >
-                            {opt}
+                            {isMuted ? <MicOff size={14} /> : <Mic size={14} />}
                         </button>
-                    );
-                })}
+                        <button 
+                            className={`voice-btn-mini ${isVideoOff ? 'muted' : 'active'}`} 
+                            onClick={toggleVideo}
+                            style={{background: isVideoOff ? '#d32f2f' : '#1976d2'}}
+                        >
+                            {isVideoOff ? <VideoOff size={14} /> : <Video size={14} />}
+                        </button>
+                    </div>
+                )}
+                
+                <div className={`q-display red-theme ${team2State?.q && /^[A-Za-z0-9]/.test(team2State.q.text) ? 'ltr-text' : 'rtl-text'}`}>
+                    {team2State?.q ? team2State.q.text : "Waiting..."}
+                </div>
+                <div className="options-grid">
+                    {team2State?.options.map((opt, idx) => {
+                        let btnClass = "option-btn";
+                        if (myTeam === 2 && isAnswered) {
+                            if (opt === team2State.q.correctAnswer) btnClass += " correct-anim";
+                            else if (opt === selectedOption) btnClass += " wrong-anim";
+                        }
+                        return (
+                            <button 
+                                key={idx} 
+                                className={btnClass}
+                                onClick={() => handleAnswer(opt)}
+                                disabled={myTeam !== 2 || isAnswered}
+                                dir="auto"
+                            >
+                                {opt}
+                            </button>
+                        );
+                    })}
+                </div>
             </div>
         </div>
 
-        {/* Center Stage */}
-        <div className="center-stage">
-            <div className="title">
-                dr.Hussein.Chemistry 🔄
-            </div>
-            <div className="divider"></div>
-            <div className="tug-container" id="rope-group" style={{ left: `${ropePosition}%` }}>
-                {/* Placeholder SVG for Tug of War */}
-                <svg viewBox="0 0 600 100" className="tug-image">
-                    <line x1="0" y1="50" x2="600" y2="50" stroke="#8d6e63" strokeWidth="10" />
-                    {/* Left Team */}
-                    <circle cx="50" cy="50" r="30" fill="#c62828" />
-                    <text x="50" y="55" textAnchor="middle" fill="white" fontSize="12">Red</text>
-                    {/* Right Team */}
-                    <circle cx="550" cy="50" r="30" fill="#1565c0" />
-                    <text x="550" y="55" textAnchor="middle" fill="white" fontSize="12">Blue</text>
-                </svg>
-                <div className="center-marker"></div>
-            </div>
-        </div>
-
-        {/* Right Side (Team 1 - Blue) */}
-        <div className="calc-box" style={{ opacity: myTeam === 1 ? 1 : 0.8, pointerEvents: myTeam === 1 ? 'auto' : 'none', position: 'relative' }}>
-            <div style={{position: 'absolute', top: -30, right: 10, fontWeight: 'bold', color: '#1565c0'}}>
-                Wins: {team1State?.score || 0}
-            </div>
+        {/* Right Column (Team 1 - Blue) */}
+        <div className="player-column">
             
-            {/* Video Circle for Team 1 */}
-            <div className="video-circle" onClick={() => setExpandedVideo(myTeam === 1 ? 'local' : 'remote')} style={{
-                position: 'absolute',
-                top: -50,
-                left: 10,
-                width: '80px',
-                height: '80px',
-                borderRadius: '50%',
-                overflow: 'hidden',
+            {/* Video Circle */}
+            <div className="video-container-static" onClick={() => setExpandedVideo(myTeam === 1 ? 'local' : 'remote')} style={{
                 border: '3px solid #1565c0',
-                background: '#000',
-                zIndex: 20,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexDirection: 'column',
-                cursor: 'pointer',
-                boxShadow: '0 0 15px rgba(21, 101, 192, 0.6)'
             }}>
-                 {/* Team 1's Video */}
-                {myTeam === 1 ? (
+                 {myTeam === 1 ? (
                     <>
                         <video ref={localVideoRef} autoPlay muted playsInline style={{width: '100%', height: '100%', objectFit: 'cover', display: !isVideoOff ? 'block' : 'none'}} />
                         {isVideoOff && (
                             <button 
                                 onClick={(e) => { e.stopPropagation(); toggleVideo(); }}
-                                style={{fontSize: '10px', padding: '5px', background: '#1565c0', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
+                                style={{
+                                    width: '100%', height: '100%', background: '#333', color: 'white', border: 'none', 
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px'
+                                }}
                             >
-                                {mediaError ? "Retry" : "Enable Cam"}
+                                {mediaError ? "Retry" : "Cam Off"}
                             </button>
                         )}
                     </>
@@ -940,85 +893,74 @@ export default function App() {
                                     const opponent = players.find(p => p.id !== myId);
                                     if (opponent?.peerId) connectVoice(opponent.peerId);
                                 }}
-                                style={{position: 'absolute', bottom: 5, fontSize: '8px', padding: '2px', background: 'rgba(0,0,0,0.5)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
+                                style={{position: 'absolute', bottom: 0, width: '100%', background: 'rgba(0,0,0,0.7)', color: 'white', border: 'none', fontSize: '10px', padding: '2px'}}
                             >
                                 Connect
+                            </button>
+                        )}
+                        {isVoiceConnected && !remoteStreamActive && (
+                             <button 
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    remoteVideoRef.current?.play().then(() => setRemoteStreamActive(true));
+                                }}
+                                style={{position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', color: 'white', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px'}}
+                            >
+                                Play
                             </button>
                         )}
                     </>
                 )}
             </div>
 
-            {myTeam === 1 && (
-                <div style={{
-                    position: 'absolute',
-                    top: 10,
-                    right: 10,
-                    zIndex: 10,
-                    display: 'flex',
-                    gap: '5px'
-                }}>
-                    <button 
-                        className={`voice-btn-mini ${isMuted ? 'muted' : 'active'}`} 
-                        onClick={toggleMute}
-                        style={{
-                            background: isMuted ? '#d32f2f' : '#4caf50',
-                            border: 'none',
-                            borderRadius: '50%',
-                            width: '32px',
-                            height: '32px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: 'white',
-                            cursor: 'pointer'
-                        }}
-                    >
-                        {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
-                    </button>
-                    <button 
-                        className={`voice-btn-mini ${isVideoOff ? 'muted' : 'active'}`} 
-                        onClick={toggleVideo}
-                        style={{
-                            background: isVideoOff ? '#d32f2f' : '#1976d2',
-                            border: 'none',
-                            borderRadius: '50%',
-                            width: '32px',
-                            height: '32px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: 'white',
-                            cursor: 'pointer'
-                        }}
-                    >
-                        {isVideoOff ? <VideoOff size={16} /> : <Video size={16} />}
-                    </button>
+            {/* Question Box */}
+            <div className="calc-box-static" style={{ opacity: myTeam === 1 ? 1 : 0.7, pointerEvents: myTeam === 1 ? 'auto' : 'none' }}>
+                <div className="score-badge-static" style={{color: '#82b1ff'}}>
+                    Wins: {team1State?.score || 0}
                 </div>
-            )}
-            <div className={`q-display blue-theme ${team1State?.q && /^[A-Za-z0-9]/.test(team1State.q.text) ? 'ltr-text' : 'rtl-text'}`}>
-                {team1State?.q ? team1State.q.text : "Waiting..."}
-            </div>
-            <div className="options-grid">
-                {team1State?.options.map((opt, idx) => {
-                    let btnClass = "option-btn";
-                    // Only show answer feedback if I am Team 1
-                    if (myTeam === 1 && isAnswered) {
-                        if (opt === team1State.q.correctAnswer) btnClass += " correct-anim";
-                        else if (opt === selectedOption) btnClass += " wrong-anim";
-                    }
-                    return (
+
+                {myTeam === 1 && (
+                    <div style={{display: 'flex', gap: '5px', justifyContent: 'center', marginBottom: '5px'}}>
                         <button 
-                            key={idx} 
-                            className={btnClass}
-                            onClick={() => handleAnswer(opt)}
-                            disabled={myTeam !== 1 || isAnswered}
-                            dir="auto"
+                            className={`voice-btn-mini ${isMuted ? 'muted' : 'active'}`} 
+                            onClick={toggleMute}
+                            style={{background: isMuted ? '#d32f2f' : '#4caf50'}}
                         >
-                            {opt}
+                            {isMuted ? <MicOff size={14} /> : <Mic size={14} />}
                         </button>
-                    );
-                })}
+                        <button 
+                            className={`voice-btn-mini ${isVideoOff ? 'muted' : 'active'}`} 
+                            onClick={toggleVideo}
+                            style={{background: isVideoOff ? '#d32f2f' : '#1976d2'}}
+                        >
+                            {isVideoOff ? <VideoOff size={14} /> : <Video size={14} />}
+                        </button>
+                    </div>
+                )}
+
+                <div className={`q-display blue-theme ${team1State?.q && /^[A-Za-z0-9]/.test(team1State.q.text) ? 'ltr-text' : 'rtl-text'}`}>
+                    {team1State?.q ? team1State.q.text : "Waiting..."}
+                </div>
+                <div className="options-grid">
+                    {team1State?.options.map((opt, idx) => {
+                        let btnClass = "option-btn";
+                        if (myTeam === 1 && isAnswered) {
+                            if (opt === team1State.q.correctAnswer) btnClass += " correct-anim";
+                            else if (opt === selectedOption) btnClass += " wrong-anim";
+                        }
+                        return (
+                            <button 
+                                key={idx} 
+                                className={btnClass}
+                                onClick={() => handleAnswer(opt)}
+                                disabled={myTeam !== 1 || isAnswered}
+                                dir="auto"
+                            >
+                                {opt}
+                            </button>
+                        );
+                    })}
+                </div>
             </div>
         </div>
 
