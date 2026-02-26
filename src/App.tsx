@@ -23,10 +23,12 @@ interface GameState {
   team1: {
       questionIndex: number;
       shuffledOptions: string[];
+      score: number; // Add score tracking
   };
   team2: {
       questionIndex: number;
       shuffledOptions: string[];
+      score: number; // Add score tracking
   };
 }
 
@@ -61,8 +63,8 @@ export default function App() {
   const [countdown, setCountdown] = useState(3);
   
   // Quiz State
-  const [team1State, setTeam1State] = useState<{q: any, options: string[]} | null>(null);
-  const [team2State, setTeam2State] = useState<{q: any, options: string[]} | null>(null);
+  const [team1State, setTeam1State] = useState<{q: any, options: string[], score: number} | null>(null);
+  const [team2State, setTeam2State] = useState<{q: any, options: string[], score: number} | null>(null);
   
   const [isAnswered, setIsAnswered] = useState(false);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
@@ -170,8 +172,8 @@ export default function App() {
                       // Auto-connect voice if both present
                       if (playerList.length === 2 && myPeerId) {
                           const opponent = playerList.find(p => p.id !== myId);
+                          // Host initiates call, Guest waits for call
                           if (opponent && opponent.peerId && !isVoiceConnected && me.isHost) {
-                              // Host calls Guest
                               connectVoice(opponent.peerId);
                           }
                       }
@@ -203,8 +205,8 @@ export default function App() {
                               }
                               
                               update(ref(db, `rooms/${roomId}/gameState`), {
-                                  team1: { questionIndex: idx1, shuffledOptions: opts1 },
-                                  team2: { questionIndex: idx2, shuffledOptions: opts2 }
+                                  team1: { questionIndex: idx1, shuffledOptions: opts1, score: 0 },
+                                  team2: { questionIndex: idx2, shuffledOptions: opts2, score: 0 }
                               });
                           }, 1000);
                       }
@@ -230,7 +232,11 @@ export default function App() {
                       const idx = data.gameState.team1.questionIndex;
                       const q = defaultQuizData[idx];
                       if (q) {
-                          setTeam1State({ q, options: data.gameState.team1.shuffledOptions || [] });
+                          setTeam1State({ 
+                              q, 
+                              options: data.gameState.team1.shuffledOptions || [],
+                              score: data.gameState.team1.score || 0
+                          });
                       }
                   }
 
@@ -239,7 +245,11 @@ export default function App() {
                       const idx = data.gameState.team2.questionIndex;
                       const q = defaultQuizData[idx];
                       if (q) {
-                          setTeam2State({ q, options: data.gameState.team2.shuffledOptions || [] });
+                          setTeam2State({ 
+                              q, 
+                              options: data.gameState.team2.shuffledOptions || [],
+                              score: data.gameState.team2.score || 0
+                          });
                       }
                   }
                   
@@ -284,8 +294,8 @@ export default function App() {
           ropePosition: 50,
           winnerName: null,
           gameStarted: false,
-          team1: { questionIndex: 0, shuffledOptions: [] },
-          team2: { questionIndex: 0, shuffledOptions: [] }
+          team1: { questionIndex: 0, shuffledOptions: [], score: 0 },
+          team2: { questionIndex: 0, shuffledOptions: [], score: 0 }
       };
 
       await set(ref(db, `rooms/${newRoomId}`), {
@@ -385,13 +395,19 @@ export default function App() {
 
       let delta = 0;
       if (myTeam === 1) {
-          // Team 1 (Right/Blue) answers correctly -> Rope moves Right (+5)
-          // Team 1 answers incorrectly -> Rope moves Left (-5)
-          delta = correct ? 5 : -5;
-      } else {
-          // Team 2 (Left/Red) answers correctly -> Rope moves Left (-5)
-          // Team 2 answers incorrectly -> Rope moves Right (+5)
+          // Team 1 (Right/Blue)
+          // Correct -> Moves LEFT (-5) (Pulling towards them? No, usually pulling towards means increasing/decreasing depending on axis)
+          // Let's assume 0 is Left (Red) and 100 is Right (Blue).
+          // If Blue pulls, rope should go to 100 (Increase).
+          // User asked to REVERSE direction.
+          // Previous: Correct -> +5 (Right).
+          // New: Correct -> -5 (Left).
           delta = correct ? -5 : 5;
+      } else {
+          // Team 2 (Left/Red)
+          // Previous: Correct -> -5 (Left).
+          // New: Correct -> +5 (Right).
+          delta = correct ? 5 : -5;
       }
 
       const newPos = ropePosition + delta;
@@ -402,11 +418,49 @@ export default function App() {
       });
 
       if (clampedPos >= 90) {
-          const winner = players.find(p => p.team === 1)?.name || "Team 1";
-          update(ref(db, `rooms/${roomId}/gameState`), { winnerName: winner });
+          // Blue (Right) Wins? Or Red?
+          // If Blue pulls to 100, Blue wins.
+          // But we reversed direction. So if Blue answers correct -> -5 (Left).
+          // So Blue is pulling towards Left (0)? That's confusing.
+          // Let's stick to the visual.
+          // 0 = Red Base. 100 = Blue Base.
+          // If Red answers correct -> Rope moves to Red (0). So -5.
+          // If Blue answers correct -> Rope moves to Blue (100). So +5.
+          
+          // USER REQUEST: "Reverse rope direction".
+          // So:
+          // Red Correct -> Moves to Blue (+5).
+          // Blue Correct -> Moves to Red (-5).
+          // This means answering correctly PUSHES the rope away?
+          
+          // Let's implement exactly what was asked: Reverse of previous.
+          // Previous: T1(Blue) Correct -> +5. T2(Red) Correct -> -5.
+          // New: T1(Blue) Correct -> -5. T2(Red) Correct -> +5.
+          
+          // Win Condition:
+          // If pos >= 90 (Right side/Blue side).
+          // If T2(Red) keeps answering correct (+5), it goes to 90. So Red wins at 90?
+          // If T1(Blue) keeps answering correct (-5), it goes to 10. So Blue wins at 10?
+          
+          // Let's update scores and reset rope.
+          const winnerTeam = 2; // Red wins at 90 (since Red pushes to Right)
+          const newScore = (team2State?.score || 0) + 1;
+           update(ref(db, `rooms/${roomId}/gameState/team2`), { score: newScore });
+           
+           // Reset Rope
+           update(ref(db, `rooms/${roomId}/gameState`), { ropePosition: 50 });
+           alert("Red Team Wins this round!");
+
       } else if (clampedPos <= 10) {
-          const winner = players.find(p => p.team === 2)?.name || "Team 2";
-          update(ref(db, `rooms/${roomId}/gameState`), { winnerName: winner });
+          // Blue wins at 10 (since Blue pushes to Left)
+          const winnerTeam = 1;
+          const newScore = (team1State?.score || 0) + 1;
+          update(ref(db, `rooms/${roomId}/gameState/team1`), { score: newScore });
+          
+          // Reset Rope
+          update(ref(db, `rooms/${roomId}/gameState`), { ropePosition: 50 });
+          alert("Blue Team Wins this round!");
+
       } else {
           // Load next question ONLY for my team
           setTimeout(() => {
@@ -547,7 +601,34 @@ export default function App() {
       
       <div className="game-wrapper">
         {/* Left Side (Team 2 - Red) */}
-        <div className="calc-box" style={{ opacity: myTeam === 2 ? 1 : 0.8, pointerEvents: myTeam === 2 ? 'auto' : 'none' }}>
+        <div className="calc-box" style={{ opacity: myTeam === 2 ? 1 : 0.8, pointerEvents: myTeam === 2 ? 'auto' : 'none', position: 'relative' }}>
+            <div style={{position: 'absolute', top: -30, left: 10, fontWeight: 'bold', color: '#c62828'}}>
+                Wins: {team2State?.score || 0}
+            </div>
+            {myTeam === 2 && (
+                <button 
+                    className={`voice-btn-mini ${isMuted ? 'muted' : 'active'}`} 
+                    onClick={toggleMute}
+                    style={{
+                        position: 'absolute',
+                        top: 10,
+                        right: 10,
+                        zIndex: 10,
+                        background: isMuted ? '#d32f2f' : '#4caf50',
+                        border: 'none',
+                        borderRadius: '50%',
+                        width: '32px',
+                        height: '32px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'white',
+                        cursor: 'pointer'
+                    }}
+                >
+                    {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
+                </button>
+            )}
             <div className={`q-display red-theme ${team2State?.q && /^[A-Za-z0-9]/.test(team2State.q.text) ? 'ltr-text' : 'rtl-text'}`}>
                 {team2State?.q ? team2State.q.text : "Waiting..."}
             </div>
@@ -593,18 +674,27 @@ export default function App() {
                 </svg>
                 <div className="center-marker"></div>
             </div>
+        </div>
 
-            {/* Voice Controls */}
-            <div className="voice-controls" style={{marginTop: '10px', display: 'flex', justifyContent: 'center'}}>
+        {/* Right Side (Team 1 - Blue) */}
+        <div className="calc-box" style={{ opacity: myTeam === 1 ? 1 : 0.8, pointerEvents: myTeam === 1 ? 'auto' : 'none', position: 'relative' }}>
+            <div style={{position: 'absolute', top: -30, right: 10, fontWeight: 'bold', color: '#1565c0'}}>
+                Wins: {team1State?.score || 0}
+            </div>
+            {myTeam === 1 && (
                 <button 
-                    className={`voice-btn ${isMuted ? 'muted' : 'active'}`} 
+                    className={`voice-btn-mini ${isMuted ? 'muted' : 'active'}`} 
                     onClick={toggleMute}
                     style={{
+                        position: 'absolute',
+                        top: 10,
+                        right: 10,
+                        zIndex: 10,
                         background: isMuted ? '#d32f2f' : '#4caf50',
                         border: 'none',
                         borderRadius: '50%',
-                        width: '40px',
-                        height: '40px',
+                        width: '32px',
+                        height: '32px',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -612,13 +702,9 @@ export default function App() {
                         cursor: 'pointer'
                     }}
                 >
-                    {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
+                    {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
                 </button>
-            </div>
-        </div>
-
-        {/* Right Side (Team 1 - Blue) */}
-        <div className="calc-box" style={{ opacity: myTeam === 1 ? 1 : 0.8, pointerEvents: myTeam === 1 ? 'auto' : 'none' }}>
+            )}
             <div className={`q-display blue-theme ${team1State?.q && /^[A-Za-z0-9]/.test(team1State.q.text) ? 'ltr-text' : 'rtl-text'}`}>
                 {team1State?.q ? team1State.q.text : "Waiting..."}
             </div>
