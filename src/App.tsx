@@ -5,9 +5,8 @@ import { getDatabase, ref, set, onValue, update, push, child, get, onDisconnect,
 import { Peer } from 'peerjs'; // Re-import PeerJS for Audio
 import { defaultQuizData } from './data';
 import './Game.css';
-import { Mic, MicOff, Phone, Share2, Settings } from 'lucide-react';
+import { Mic, MicOff, Phone, Share2, Settings, Video, VideoOff } from 'lucide-react';
 
-// --- Types ---
 interface Player {
   id: string;
   name: string;
@@ -72,30 +71,43 @@ export default function App() {
   
   const lastQuestionIndexRef = useRef<number>(-1);
 
-  // Voice Chat State
+  // Voice/Video Chat State
   const [myPeerId, setMyPeerId] = useState<string>('');
   const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
   const [isVoiceConnected, setIsVoiceConnected] = useState(false);
-  const localAudioRef = useRef<HTMLAudioElement>(null);
-  const remoteAudioRef = useRef<HTMLAudioElement>(null);
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  // Keep audio refs for fallback or just use video elements for audio too (video elements play audio)
+  // We can remove audio refs if we use video elements.
   const localStream = useRef<MediaStream | null>(null);
   const peerRef = useRef<Peer | null>(null);
 
   const setupLocalStream = async () => {
       try {
           if (localStream.current) return localStream.current;
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // Request both audio and video
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
           localStream.current = stream;
-          if (localAudioRef.current) {
-              localAudioRef.current.srcObject = stream;
-              localAudioRef.current.muted = true;
+          if (localVideoRef.current) {
+              localVideoRef.current.srcObject = stream;
+              localVideoRef.current.muted = true; // Mute local video to prevent echo
           }
           return stream;
       } catch (err) {
           console.error("Failed to get local stream", err);
-          alert("Microphone access denied. Voice chat will not work.");
+          alert("Camera/Microphone access denied. Media chat will not work.");
           return null;
       }
+  };
+
+  const toggleVideo = () => {
+    if (localStream.current) {
+      localStream.current.getVideoTracks().forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsVideoOff(!isVideoOff);
+    }
   };
 
   // --- Initialization ---
@@ -124,10 +136,10 @@ export default function App() {
         if (stream) {
             call.answer(stream);
             call.on('stream', (remoteStream) => {
-                if (remoteAudioRef.current) {
-                    remoteAudioRef.current.srcObject = remoteStream;
+                if (remoteVideoRef.current) {
+                    remoteVideoRef.current.srcObject = remoteStream;
                     // Ensure we try to play it
-                    remoteAudioRef.current.play().catch(e => console.error("Auto-play failed", e));
+                    remoteVideoRef.current.play().catch(e => console.error("Auto-play failed", e));
                 }
             });
             setIsVoiceConnected(true);
@@ -153,9 +165,9 @@ export default function App() {
           const call = peerRef.current?.call(remotePeerId, stream);
           if (call) {
               call.on('stream', (remoteStream) => {
-                  if (remoteAudioRef.current) {
-                      remoteAudioRef.current.srcObject = remoteStream;
-                      remoteAudioRef.current.play().catch(e => console.error("Auto-play failed", e));
+                  if (remoteVideoRef.current) {
+                      remoteVideoRef.current.srcObject = remoteStream;
+                      remoteVideoRef.current.play().catch(e => console.error("Auto-play failed", e));
                   }
               });
               setIsVoiceConnected(true);
@@ -460,48 +472,28 @@ export default function App() {
       });
 
       if (clampedPos >= 90) {
-          // Blue (Right) Wins? Or Red?
-          // If Blue pulls to 100, Blue wins.
-          // But we reversed direction. So if Blue answers correct -> -5 (Left).
-          // So Blue is pulling towards Left (0)? That's confusing.
-          // Let's stick to the visual.
-          // 0 = Red Base. 100 = Blue Base.
-          // If Red answers correct -> Rope moves to Red (0). So -5.
-          // If Blue answers correct -> Rope moves to Blue (100). So +5.
-          
-          // USER REQUEST: "Reverse rope direction".
-          // So:
-          // Red Correct -> Moves to Blue (+5).
-          // Blue Correct -> Moves to Red (-5).
-          // This means answering correctly PUSHES the rope away?
-          
-          // Let's implement exactly what was asked: Reverse of previous.
-          // Previous: T1(Blue) Correct -> +5. T2(Red) Correct -> -5.
-          // New: T1(Blue) Correct -> -5. T2(Red) Correct -> +5.
-          
-          // Win Condition:
-          // If pos >= 90 (Right side/Blue side).
-          // If T2(Red) keeps answering correct (+5), it goes to 90. So Red wins at 90?
-          // If T1(Blue) keeps answering correct (-5), it goes to 10. So Blue wins at 10?
-          
-          // Let's update scores and reset rope.
-          const winnerTeam = 2; // Red wins at 90 (since Red pushes to Right)
+          // Red wins at 90
           const newScore = (team2State?.score || 0) + 1;
            update(ref(db, `rooms/${roomId}/gameState/team2`), { score: newScore });
            
            // Reset Rope
            update(ref(db, `rooms/${roomId}/gameState`), { ropePosition: 50 });
-           alert("Red Team Wins this round!");
+           
+           // Load NEW questions for BOTH teams to reset the round
+           loadNextQuestionForTeam(1);
+           loadNextQuestionForTeam(2);
 
       } else if (clampedPos <= 10) {
-          // Blue wins at 10 (since Blue pushes to Left)
-          const winnerTeam = 1;
+          // Blue wins at 10
           const newScore = (team1State?.score || 0) + 1;
           update(ref(db, `rooms/${roomId}/gameState/team1`), { score: newScore });
           
           // Reset Rope
           update(ref(db, `rooms/${roomId}/gameState`), { ropePosition: 50 });
-          alert("Blue Team Wins this round!");
+          
+          // Load NEW questions for BOTH teams to reset the round
+          loadNextQuestionForTeam(1);
+          loadNextQuestionForTeam(2);
 
       } else {
           // Load next question ONLY for my team
@@ -619,8 +611,6 @@ export default function App() {
 
   return (
     <div className="game-container">
-      <audio ref={localAudioRef} autoPlay muted />
-      <audio ref={remoteAudioRef} autoPlay />
       
       <div className="game-wrapper">
         {/* Left Side (Team 2 - Red) */}
@@ -628,29 +618,75 @@ export default function App() {
             <div style={{position: 'absolute', top: -30, left: 10, fontWeight: 'bold', color: '#c62828'}}>
                 Wins: {team2State?.score || 0}
             </div>
+            
+            {/* Video Circle for Team 2 */}
+            <div className="video-circle" style={{
+                position: 'absolute',
+                top: -50,
+                right: 10,
+                width: '80px',
+                height: '80px',
+                borderRadius: '50%',
+                overflow: 'hidden',
+                border: '3px solid #c62828',
+                background: '#000',
+                zIndex: 20
+            }}>
+                {/* Team 2's Video */}
+                {/* If I am Team 2, this is ME (Local). If I am Team 1, this is OPPONENT (Remote). */}
+                {myTeam === 2 ? (
+                    <video ref={localVideoRef} autoPlay muted playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                ) : (
+                    <video ref={remoteVideoRef} autoPlay playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                )}
+            </div>
+
             {myTeam === 2 && (
-                <button 
-                    className={`voice-btn-mini ${isMuted ? 'muted' : 'active'}`} 
-                    onClick={toggleMute}
-                    style={{
-                        position: 'absolute',
-                        top: 10,
-                        right: 10,
-                        zIndex: 10,
-                        background: isMuted ? '#d32f2f' : '#4caf50',
-                        border: 'none',
-                        borderRadius: '50%',
-                        width: '32px',
-                        height: '32px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'white',
-                        cursor: 'pointer'
-                    }}
-                >
-                    {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
-                </button>
+                <div style={{
+                    position: 'absolute',
+                    top: 10,
+                    right: 10,
+                    zIndex: 10,
+                    display: 'flex',
+                    gap: '5px'
+                }}>
+                    <button 
+                        className={`voice-btn-mini ${isMuted ? 'muted' : 'active'}`} 
+                        onClick={toggleMute}
+                        style={{
+                            background: isMuted ? '#d32f2f' : '#4caf50',
+                            border: 'none',
+                            borderRadius: '50%',
+                            width: '32px',
+                            height: '32px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'white',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
+                    </button>
+                    <button 
+                        className={`voice-btn-mini ${isVideoOff ? 'muted' : 'active'}`} 
+                        onClick={toggleVideo}
+                        style={{
+                            background: isVideoOff ? '#d32f2f' : '#1976d2',
+                            border: 'none',
+                            borderRadius: '50%',
+                            width: '32px',
+                            height: '32px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'white',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        {isVideoOff ? <VideoOff size={16} /> : <Video size={16} />}
+                    </button>
+                </div>
             )}
             <div className={`q-display red-theme ${team2State?.q && /^[A-Za-z0-9]/.test(team2State.q.text) ? 'ltr-text' : 'rtl-text'}`}>
                 {team2State?.q ? team2State.q.text : "Waiting..."}
@@ -704,29 +740,75 @@ export default function App() {
             <div style={{position: 'absolute', top: -30, right: 10, fontWeight: 'bold', color: '#1565c0'}}>
                 Wins: {team1State?.score || 0}
             </div>
+            
+            {/* Video Circle for Team 1 */}
+            <div className="video-circle" style={{
+                position: 'absolute',
+                top: -50,
+                left: 10,
+                width: '80px',
+                height: '80px',
+                borderRadius: '50%',
+                overflow: 'hidden',
+                border: '3px solid #1565c0',
+                background: '#000',
+                zIndex: 20
+            }}>
+                 {/* Team 1's Video */}
+                 {/* If I am Team 1, this is ME (Local). If I am Team 2, this is OPPONENT (Remote). */}
+                {myTeam === 1 ? (
+                    <video ref={localVideoRef} autoPlay muted playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                ) : (
+                    <video ref={remoteVideoRef} autoPlay playsInline style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                )}
+            </div>
+
             {myTeam === 1 && (
-                <button 
-                    className={`voice-btn-mini ${isMuted ? 'muted' : 'active'}`} 
-                    onClick={toggleMute}
-                    style={{
-                        position: 'absolute',
-                        top: 10,
-                        right: 10,
-                        zIndex: 10,
-                        background: isMuted ? '#d32f2f' : '#4caf50',
-                        border: 'none',
-                        borderRadius: '50%',
-                        width: '32px',
-                        height: '32px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'white',
-                        cursor: 'pointer'
-                    }}
-                >
-                    {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
-                </button>
+                <div style={{
+                    position: 'absolute',
+                    top: 10,
+                    right: 10,
+                    zIndex: 10,
+                    display: 'flex',
+                    gap: '5px'
+                }}>
+                    <button 
+                        className={`voice-btn-mini ${isMuted ? 'muted' : 'active'}`} 
+                        onClick={toggleMute}
+                        style={{
+                            background: isMuted ? '#d32f2f' : '#4caf50',
+                            border: 'none',
+                            borderRadius: '50%',
+                            width: '32px',
+                            height: '32px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'white',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
+                    </button>
+                    <button 
+                        className={`voice-btn-mini ${isVideoOff ? 'muted' : 'active'}`} 
+                        onClick={toggleVideo}
+                        style={{
+                            background: isVideoOff ? '#d32f2f' : '#1976d2',
+                            border: 'none',
+                            borderRadius: '50%',
+                            width: '32px',
+                            height: '32px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'white',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        {isVideoOff ? <VideoOff size={16} /> : <Video size={16} />}
+                    </button>
+                </div>
             )}
             <div className={`q-display blue-theme ${team1State?.q && /^[A-Za-z0-9]/.test(team1State.q.text) ? 'ltr-text' : 'rtl-text'}`}>
                 {team1State?.q ? team1State.q.text : "Waiting..."}
