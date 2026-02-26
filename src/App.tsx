@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, onValue, update, push, child, get, onDisconnect, remove } from 'firebase/database';
+import { Peer } from 'peerjs'; // Re-import PeerJS for Audio
 import { defaultQuizData } from './data';
 import './Game.css';
 import { Mic, MicOff, Phone, Share2, Settings } from 'lucide-react';
@@ -12,14 +13,21 @@ interface Player {
   name: string;
   team: 1 | 2;
   isHost: boolean;
+  peerId?: string; // Add peerId for voice
 }
 
 interface GameState {
   ropePosition: number;
   winnerName: string | null;
   gameStarted: boolean;
-  currentQuestionIndex: number | null;
-  shuffledOptions: string[] | null;
+  team1: {
+      questionIndex: number;
+      shuffledOptions: string[];
+  };
+  team2: {
+      questionIndex: number;
+      shuffledOptions: string[];
+  };
 }
 
 // --- Default Config ---
@@ -53,13 +61,63 @@ export default function App() {
   const [countdown, setCountdown] = useState(3);
   
   // Quiz State
-  const [currentQuestion, setCurrentQuestion] = useState<any>(null);
-  const [shuffledOptions, setShuffledOptions] = useState<string[]>([]);
+  const [team1State, setTeam1State] = useState<{q: any, options: string[]} | null>(null);
+  const [team2State, setTeam2State] = useState<{q: any, options: string[]} | null>(null);
+  
   const [isAnswered, setIsAnswered] = useState(false);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
+  
+  const lastQuestionIndexRef = useRef<number>(-1);
+
+  // Voice Chat State
+  const [myPeerId, setMyPeerId] = useState<string>('');
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVoiceConnected, setIsVoiceConnected] = useState(false);
+  const localAudioRef = useRef<HTMLAudioElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
+  const localStream = useRef<MediaStream | null>(null);
+  const peerRef = useRef<Peer | null>(null);
 
   // --- Initialization ---
+
+  useEffect(() => {
+    // Initialize PeerJS for Voice
+    const peer = new Peer({
+        config: {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
+            ]
+        }
+    });
+    peerRef.current = peer;
+
+    peer.on('open', (id) => {
+        setMyPeerId(id);
+    });
+
+    peer.on('call', (call) => {
+        navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+            localStream.current = stream;
+            if (localAudioRef.current) {
+                localAudioRef.current.srcObject = stream;
+                localAudioRef.current.muted = true;
+            }
+            call.answer(stream);
+            call.on('stream', (remoteStream) => {
+                if (remoteAudioRef.current) {
+                    remoteAudioRef.current.srcObject = remoteStream;
+                }
+            });
+            setIsVoiceConnected(true);
+        }).catch(err => console.error("Mic error", err));
+    });
+
+    return () => {
+        peer.destroy();
+    };
+  }, []);
 
   useEffect(() => {
     // Initialize Firebase immediately
@@ -109,6 +167,15 @@ export default function App() {
                       setMyTeam(me.team);
                       setIsHost(me.isHost);
 
+                      // Auto-connect voice if both present
+                      if (playerList.length === 2 && myPeerId) {
+                          const opponent = playerList.find(p => p.id !== myId);
+                          if (opponent && opponent.peerId && !isVoiceConnected && me.isHost) {
+                              // Host calls Guest
+                              connectVoice(opponent.peerId);
+                          }
+                      }
+
                       // Auto-start game if 2 players are present and I am the host
                       if (me.isHost && playerList.length === 2 && !data.gameState?.gameStarted) {
                           // Small delay to ensure UI updates first
@@ -117,18 +184,27 @@ export default function App() {
                                   gameStarted: true
                               });
                               
-                              // Load first question
-                              const randomIndex = Math.floor(Math.random() * defaultQuizData.length);
-                              const q = defaultQuizData[randomIndex];
-                              const opts = [...q.options];
-                              for (let i = opts.length - 1; i > 0; i--) {
+                              // Load first question for Team 1
+                              const idx1 = Math.floor(Math.random() * defaultQuizData.length);
+                              const q1 = defaultQuizData[idx1];
+                              const opts1 = [...q1.options];
+                              for (let i = opts1.length - 1; i > 0; i--) {
                                   const j = Math.floor(Math.random() * (i + 1));
-                                  [opts[i], opts[j]] = [opts[j], opts[i]];
+                                  [opts1[i], opts1[j]] = [opts1[j], opts1[i]];
+                              }
+                              
+                              // Load first question for Team 2
+                              const idx2 = Math.floor(Math.random() * defaultQuizData.length);
+                              const q2 = defaultQuizData[idx2];
+                              const opts2 = [...q2.options];
+                              for (let i = opts2.length - 1; i > 0; i--) {
+                                  const j = Math.floor(Math.random() * (i + 1));
+                                  [opts2[i], opts2[j]] = [opts2[j], opts2[i]];
                               }
                               
                               update(ref(db, `rooms/${roomId}/gameState`), {
-                                  currentQuestionIndex: randomIndex,
-                                  shuffledOptions: opts
+                                  team1: { questionIndex: idx1, shuffledOptions: opts1 },
+                                  team2: { questionIndex: idx2, shuffledOptions: opts2 }
                               });
                           }, 1000);
                       }
@@ -149,17 +225,31 @@ export default function App() {
                       setView('win');
                   }
                   
-                  // Sync Question
-                  if (data.gameState.currentQuestionIndex !== undefined && data.gameState.currentQuestionIndex !== null) {
-                      const q = defaultQuizData[data.gameState.currentQuestionIndex];
-                      // Only update if it's a new question
-                      if (!currentQuestion || q.text !== currentQuestion.text) {
-                          setCurrentQuestion(q);
-                          setShuffledOptions(data.gameState.shuffledOptions || q.options);
-                          setIsAnswered(false);
-                          setSelectedOption(null);
-                          setIsCorrect(null);
+                  // Sync Question for Team 1
+                  if (data.gameState.team1) {
+                      const idx = data.gameState.team1.questionIndex;
+                      const q = defaultQuizData[idx];
+                      if (q) {
+                          setTeam1State({ q, options: data.gameState.team1.shuffledOptions || [] });
                       }
+                  }
+
+                  // Sync Question for Team 2
+                  if (data.gameState.team2) {
+                      const idx = data.gameState.team2.questionIndex;
+                      const q = defaultQuizData[idx];
+                      if (q) {
+                          setTeam2State({ q, options: data.gameState.team2.shuffledOptions || [] });
+                      }
+                  }
+                  
+                  // Reset local answer state if MY question changed
+                  const myCurrentIndex = myTeam === 1 ? data.gameState.team1?.questionIndex : data.gameState.team2?.questionIndex;
+                  if (myCurrentIndex !== undefined && myCurrentIndex !== lastQuestionIndexRef.current) {
+                      setIsAnswered(false);
+                      setSelectedOption(null);
+                      setIsCorrect(null);
+                      lastQuestionIndexRef.current = myCurrentIndex;
                   }
               }
           } else {
@@ -186,15 +276,16 @@ export default function App() {
           id: myId,
           name: playerName,
           team: 1,
-          isHost: true
+          isHost: true,
+          peerId: myPeerId
       };
 
       const initialGameState: GameState = {
           ropePosition: 50,
           winnerName: null,
           gameStarted: false,
-          currentQuestionIndex: null,
-          shuffledOptions: null
+          team1: { questionIndex: 0, shuffledOptions: [] },
+          team2: { questionIndex: 0, shuffledOptions: [] }
       };
 
       await set(ref(db, `rooms/${newRoomId}`), {
@@ -236,18 +327,12 @@ export default function App() {
           id: myId,
           name: playerName,
           team: 2, // Guest is Team 2
-          isHost: false
+          isHost: false,
+          peerId: myPeerId
       };
 
       await update(ref(db, `rooms/${roomId}/players/${myId}`), player);
       onDisconnect(ref(db, `rooms/${roomId}/players/${myId}`)).remove();
-  };
-
-  const startGame = () => {
-      update(ref(db, `rooms/${roomId}/gameState`), {
-          gameStarted: true
-      });
-      loadNextQuestion();
   };
 
   const startLocalCountdown = () => {
@@ -264,7 +349,7 @@ export default function App() {
       }, 1000);
   };
 
-  const loadNextQuestion = () => {
+  const loadNextQuestionForTeam = (team: 1 | 2) => {
       const randomIndex = Math.floor(Math.random() * defaultQuizData.length);
       const q = defaultQuizData[randomIndex];
       
@@ -275,24 +360,37 @@ export default function App() {
           [opts[i], opts[j]] = [opts[j], opts[i]];
       }
 
-      update(ref(db, `rooms/${roomId}/gameState`), {
-          currentQuestionIndex: randomIndex,
-          shuffledOptions: opts
-      });
+      if (team === 1) {
+          update(ref(db, `rooms/${roomId}/gameState/team1`), {
+              questionIndex: randomIndex,
+              shuffledOptions: opts
+          });
+      } else {
+          update(ref(db, `rooms/${roomId}/gameState/team2`), {
+              questionIndex: randomIndex,
+              shuffledOptions: opts
+          });
+      }
   };
 
   const handleAnswer = (option: string) => {
-      if (isAnswered || !currentQuestion) return;
+      const myQ = myTeam === 1 ? team1State?.q : team2State?.q;
+      if (isAnswered || !myQ) return;
+      
       setIsAnswered(true);
       setSelectedOption(option);
 
-      const correct = option === currentQuestion.correctAnswer;
+      const correct = option === myQ.correctAnswer;
       setIsCorrect(correct);
 
       let delta = 0;
       if (myTeam === 1) {
+          // Team 1 (Right/Blue) answers correctly -> Rope moves Right (+5)
+          // Team 1 answers incorrectly -> Rope moves Left (-5)
           delta = correct ? 5 : -5;
       } else {
+          // Team 2 (Left/Red) answers correctly -> Rope moves Left (-5)
+          // Team 2 answers incorrectly -> Rope moves Right (+5)
           delta = correct ? -5 : 5;
       }
 
@@ -310,21 +408,39 @@ export default function App() {
           const winner = players.find(p => p.team === 2)?.name || "Team 2";
           update(ref(db, `rooms/${roomId}/gameState`), { winnerName: winner });
       } else {
-          // Only host loads next question to avoid conflicts? 
-          // Or whoever answers? Better if host manages flow or just simple timeout.
-          // Let's make it so whoever answers triggers the timeout for next question locally?
-          // No, state must be synced.
-          
-          // Simple logic: Wait 1s then load next.
-          // We need to ensure we don't double skip.
-          // Let's say: If I answered, I request next question after 1s.
+          // Load next question ONLY for my team
           setTimeout(() => {
-              // Only one person needs to trigger this. 
-              // Since both can answer, it might race.
-              // Let's rely on the fact that updates are atomic-ish.
-              loadNextQuestion();
+              if (myTeam) loadNextQuestionForTeam(myTeam);
           }, 1000);
       }
+  };
+
+  const connectVoice = (remotePeerId: string) => {
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+          localStream.current = stream;
+          if (localAudioRef.current) {
+              localAudioRef.current.srcObject = stream;
+              localAudioRef.current.muted = true;
+          }
+          const call = peerRef.current?.call(remotePeerId, stream);
+          if (call) {
+              call.on('stream', (remoteStream) => {
+                  if (remoteAudioRef.current) {
+                      remoteAudioRef.current.srcObject = remoteStream;
+                  }
+              });
+              setIsVoiceConnected(true);
+          }
+      }).catch(err => console.error("Mic error", err));
+  };
+
+  const toggleMute = () => {
+    if (localStream.current) {
+      localStream.current.getAudioTracks().forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsMuted(!isMuted);
+    }
   };
 
   const copyInvite = () => {
@@ -385,9 +501,7 @@ export default function App() {
             )}
 
             {players.length === 2 && isHost && (
-                <button className="btn-start-game" onClick={startGame}>
-                    دەستپێکردن
-                </button>
+                <p style={{color: 'green'}}>Starting game automatically...</p>
             )}
             {players.length === 2 && !isHost && (
                 <p>Waiting for host to start...</p>
@@ -428,17 +542,21 @@ export default function App() {
 
   return (
     <div className="game-container">
+      <audio ref={localAudioRef} autoPlay muted />
+      <audio ref={remoteAudioRef} autoPlay />
+      
       <div className="game-wrapper">
         {/* Left Side (Team 2 - Red) */}
-        <div className="calc-box" style={{ opacity: myTeam === 2 ? 1 : 0.5, pointerEvents: myTeam === 2 ? 'auto' : 'none' }}>
-            <div className={`q-display red-theme ${currentQuestion && /^[A-Za-z0-9]/.test(currentQuestion.text) ? 'ltr-text' : 'rtl-text'}`}>
-                {myTeam === 2 ? currentQuestion?.text : "Waiting for opponent..."}
+        <div className="calc-box" style={{ opacity: myTeam === 2 ? 1 : 0.8, pointerEvents: myTeam === 2 ? 'auto' : 'none' }}>
+            <div className={`q-display red-theme ${team2State?.q && /^[A-Za-z0-9]/.test(team2State.q.text) ? 'ltr-text' : 'rtl-text'}`}>
+                {team2State?.q ? team2State.q.text : "Waiting..."}
             </div>
             <div className="options-grid">
-                {myTeam === 2 && shuffledOptions.map((opt, idx) => {
+                {team2State?.options.map((opt, idx) => {
                     let btnClass = "option-btn";
-                    if (isAnswered) {
-                        if (opt === currentQuestion?.correctAnswer) btnClass += " correct-anim";
+                    // Only show answer feedback if I am Team 2
+                    if (myTeam === 2 && isAnswered) {
+                        if (opt === team2State.q.correctAnswer) btnClass += " correct-anim";
                         else if (opt === selectedOption) btnClass += " wrong-anim";
                     }
                     return (
@@ -446,7 +564,7 @@ export default function App() {
                             key={idx} 
                             className={btnClass}
                             onClick={() => handleAnswer(opt)}
-                            disabled={isAnswered}
+                            disabled={myTeam !== 2 || isAnswered}
                             dir="auto"
                         >
                             {opt}
@@ -475,18 +593,41 @@ export default function App() {
                 </svg>
                 <div className="center-marker"></div>
             </div>
+
+            {/* Voice Controls */}
+            <div className="voice-controls" style={{marginTop: '10px', display: 'flex', justifyContent: 'center'}}>
+                <button 
+                    className={`voice-btn ${isMuted ? 'muted' : 'active'}`} 
+                    onClick={toggleMute}
+                    style={{
+                        background: isMuted ? '#d32f2f' : '#4caf50',
+                        border: 'none',
+                        borderRadius: '50%',
+                        width: '40px',
+                        height: '40px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'white',
+                        cursor: 'pointer'
+                    }}
+                >
+                    {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
+                </button>
+            </div>
         </div>
 
         {/* Right Side (Team 1 - Blue) */}
-        <div className="calc-box" style={{ opacity: myTeam === 1 ? 1 : 0.5, pointerEvents: myTeam === 1 ? 'auto' : 'none' }}>
-            <div className={`q-display blue-theme ${currentQuestion && /^[A-Za-z0-9]/.test(currentQuestion.text) ? 'ltr-text' : 'rtl-text'}`}>
-                {myTeam === 1 ? currentQuestion?.text : "Waiting for opponent..."}
+        <div className="calc-box" style={{ opacity: myTeam === 1 ? 1 : 0.8, pointerEvents: myTeam === 1 ? 'auto' : 'none' }}>
+            <div className={`q-display blue-theme ${team1State?.q && /^[A-Za-z0-9]/.test(team1State.q.text) ? 'ltr-text' : 'rtl-text'}`}>
+                {team1State?.q ? team1State.q.text : "Waiting..."}
             </div>
             <div className="options-grid">
-                {myTeam === 1 && shuffledOptions.map((opt, idx) => {
+                {team1State?.options.map((opt, idx) => {
                     let btnClass = "option-btn";
-                    if (isAnswered) {
-                        if (opt === currentQuestion?.correctAnswer) btnClass += " correct-anim";
+                    // Only show answer feedback if I am Team 1
+                    if (myTeam === 1 && isAnswered) {
+                        if (opt === team1State.q.correctAnswer) btnClass += " correct-anim";
                         else if (opt === selectedOption) btnClass += " wrong-anim";
                     }
                     return (
@@ -494,7 +635,7 @@ export default function App() {
                             key={idx} 
                             className={btnClass}
                             onClick={() => handleAnswer(opt)}
-                            disabled={isAnswered}
+                            disabled={myTeam !== 1 || isAnswered}
                             dir="auto"
                         >
                             {opt}
